@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+  <title>운명 피하기: 내 사주대로 달린다</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@500;700;900&family=Noto+Serif+KR:wght@900&display=swap" />
+  <style>
+    :root { --bg: #1b1530; --panel: #2a2146; --ink: #f6f1e7; --sub: #b9aed6; --gold: #f2c14e; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--ink); font-family: "Noto Sans KR", sans-serif; display: grid; place-items: center; }
+    .panel { width: min(440px, calc(100vw - 32px)); background: var(--panel); border-radius: 20px; padding: 24px; }
+    h1 { margin: 0 0 4px; color: var(--gold); font-family: "Noto Serif KR", serif; }
+    label { display: block; margin: 12px 0 4px; color: var(--sub); font-size: 14px; }
+    input, button { width: 100%; padding: 12px; border-radius: 12px; border: 0; font: inherit; }
+    button { margin-top: 16px; background: var(--gold); color: var(--bg); font-weight: 900; cursor: pointer; }
+    ul { padding-left: 18px; line-height: 1.6; }
+    #game { width: 100vw; max-width: 960px; }
+    #result { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; place-items: center; }
+    #result canvas { height: min(100vh, 177.7vw); aspect-ratio: 9 / 16; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <form id="birth-form" class="panel">
+    <h1>운명 피하기</h1>
+    <div>내 사주대로 달린다</div>
+    <label>생년월일 (양력)</label>
+    <input type="date" name="date" required value="1995-06-15" />
+    <label>태어난 시각 (모르면 비워두기)</label>
+    <input type="time" name="time" value="08:30" />
+    <button type="submit">사주 뽑고 캐릭터 받기</button>
+  </form>
+
+  <section id="fortune" class="panel" hidden>
+    <h1 id="char-name"></h1>
+    <div id="char-desc"></div>
+    <ul id="trait-list"></ul>
+    <strong id="today-title"></strong>
+    <ul id="today-list"></ul>
+    <button id="start">달리기 시작 (↑/Space 점프 · ↓ 슬라이딩 · 모바일: 화면 좌/우)</button>
+  </section>
+
+  <div id="game" hidden></div>
+  <div id="result"><canvas width="1080" height="1920"></canvas></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

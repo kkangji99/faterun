@@ -1,0 +1,11 @@
+{
+  "name": "faterun",
+  "version": "0.1.0",
+  "description": "운명 피하기: 내 사주대로 달린다 — 사주 연동 2D 캐주얼 러너 (Phaser 3)",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "npx --yes http-server -c-1 -p 8080 .",
+    "test": "node --test test/*.test.js"
+  }
+}
