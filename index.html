@@ -18,13 +18,26 @@
       margin: 0; background: var(--bg); color: var(--ink);
       font: 16px/1.5 "Noto Sans KR", sans-serif;
       display: grid; place-items: center; padding-inline: 16px;
+      word-break: keep-all; overflow-wrap: anywhere;
+      -webkit-tap-highlight-color: transparent;
     }
+    body.playing { padding: 0; overflow: hidden; height: 100vh; height: 100dvh; }
+    #game canvas { display: block; }
     .screen { width: min(460px, 100%); padding-block: 24px; display: grid; gap: 16px; }
     h1 { margin: 0; font: 56px/1 var(--display); color: var(--red); text-align: center; }
     .tag { margin: 0; text-align: center; color: var(--sub); font-family: var(--display); font-size: 20px; }
     .card { background: var(--card); border: 3px solid var(--line); border-radius: 24px; padding: 20px; display: grid; gap: 12px; box-shadow: 0 6px 0 var(--line); }
     label { font-family: var(--display); font-size: 18px; }
-    input[type="date"], input[type="time"] { width: 100%; padding: 12px; border: 2px solid var(--line); border-radius: 14px; font: inherit; background: #fff; }
+    .card > * { min-width: 0; }
+    /* iOS Safari: 날짜/시간 칸의 고유 최소 폭 때문에 카드 밖으로 삐져나가는 것 방지 */
+    input[type="date"], input[type="time"] {
+      display: block; width: 100%; max-width: 100%; min-width: 0; min-height: 50px;
+      -webkit-appearance: none; appearance: none;
+      padding: 12px; border: 2px solid var(--line); border-radius: 14px;
+      font: inherit; font-size: 16px; color: var(--ink); background: #fff; text-align: left;
+    }
+    input::-webkit-date-and-time-value { text-align: left; }
+    input:disabled { opacity: 0.45; }
     .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .check { font-family: inherit; font-size: 14px; color: var(--sub); display: flex; gap: 6px; align-items: center; }
     button.big {
@@ -52,11 +65,18 @@
     .how { display: grid; gap: 6px; font-size: 15px; }
     .rps { display: flex; flex-wrap: wrap; gap: 6px 12px; font-family: var(--display); font-size: 17px; }
     .sub-term { color: var(--sub); font-size: 12px; }
-    #game { width: 100%; max-width: 960px; }
-    #game canvas { border-radius: 16px; }
-    #mute { position: fixed; top: calc(8px + env(safe-area-inset-top, 0px)); right: 8px; border: 2px solid var(--line); border-radius: 999px; background: var(--card); font: 14px var(--display); padding: 4px 10px; cursor: pointer; }
+    /* 게임: 화면 전체를 쓰고, 탭이 확대·선택으로 새지 않게 */
+    #game {
+      width: 100vw; height: 100vh; height: 100dvh;
+      overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+      padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+    }
     #result { position: fixed; inset: 0; background: rgba(34, 26, 46, 0.6); display: grid; place-items: center; padding: 8px; }
-    #result canvas { height: 100%; max-height: calc(100vh - 16px); max-width: 100%; aspect-ratio: 9 / 16; border-radius: 20px; }
+    /* 9:16 비율을 지키면서 화면 안에 맞춘다 (늘어나지 않게 폭으로만 크기 결정) */
+    #result canvas {
+      width: min(100%, calc((100vh - 16px) * 9 / 16)); width: min(100%, calc((100dvh - 16px) * 9 / 16));
+      height: auto; aspect-ratio: 9 / 16; border-radius: 20px;
+    }
     [hidden] { display: none !important; }
   </style>
 </head>
@@ -107,7 +127,6 @@
   </section>
 
   <div id="game" hidden></div>
-  <button id="mute" hidden>🔊 소리</button>
   <div id="result" hidden><canvas width="1080" height="1920" aria-label="결과 카드"></canvas></div>
 
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>

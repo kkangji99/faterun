@@ -9,17 +9,33 @@ import {
   drawPlayer, drawWall, drawSmall, drawCoin, drawHeart, drawClover, drawBubble, drawSky, drawHills, drawGround,
   PLAYER_SIZE, WALL_SIZE, SMALL_SIZE,
 } from './art.js';
-import { sfx } from './sfx.js';
+import { sfx, setMuted, isMuted } from './sfx.js';
 
-const W = 960;
-const H = 540;
-const GROUND_Y = 440;
-const PLAYER_X = 200;
+// 화면 배치는 게임 크기로 정한다: 가로(960×540) 또는 세로(폭 600, 높이는 폰 비율).
+// 세로 화면은 땅을 아래쪽에 크게 두고 그 위에 큰 변신/점프 버튼을 놓는다.
+let W = 960;
+let H = 540;
+let GROUND_Y = 440;
+let PLAYER_X = 200;
+let PORTRAIT = false;
 const PX_PER_M = 40;
+
+function applyLayout(width, height) {
+  W = width;
+  H = height;
+  PORTRAIT = height > width;
+  GROUND_Y = PORTRAIT ? Math.round(height * 0.6) : 440;
+  PLAYER_X = PORTRAIT ? 110 : 200;
+}
+
+/** 뷰포트 크기 → 게임 해상도 */
+export function gameSizeFor(vw, vh) {
+  if (vh <= vw) return { width: 960, height: 540 };
+  return { width: 600, height: Math.max(900, Math.min(1400, Math.round((600 * vh) / vw))) };
+}
 const BASE_SPEED = 330; // px/s
 const FONT = '"Jua", "Noto Sans KR", sans-serif';
 
-export const GAME_SIZE = { width: W, height: H };
 
 export class RunScene extends Phaser.Scene {
   constructor() {
@@ -28,6 +44,7 @@ export class RunScene extends Phaser.Scene {
 
   /** @param {{profile: ReturnType<import('./profile.js').createProfile>, onGameOver: Function}} data */
   init(data) {
+    applyLayout(this.scale.width, this.scale.height);
     this.profile = data.profile;
     this.onGameOver = data.onGameOver;
     this.run = createRun(this.profile);
@@ -45,9 +62,9 @@ export class RunScene extends Phaser.Scene {
     this.makeTextures();
     this.physics.world.gravity.y = 2600;
 
-    this.add.image(W / 2, H / 2, 'sky');
-    this.hills = this.add.tileSprite(W / 2, GROUND_Y - 80, W, 160, 'hills');
-    this.ground = this.add.tileSprite(W / 2, GROUND_Y + (H - GROUND_Y) / 2, W, H - GROUND_Y, 'ground');
+    this.add.image(W / 2, H / 2, `sky-${W}x${H}`);
+    this.hills = this.add.tileSprite(W / 2, GROUND_Y - 80, W, 160, `hills-${W}`);
+    this.ground = this.add.tileSprite(W / 2, GROUND_Y + (H - GROUND_Y) / 2, W, H - GROUND_Y, `ground-${W}x${H - GROUND_Y}`);
     const floor = this.add.rectangle(W / 2, GROUND_Y + 20, W, 40, 0, 0);
     this.physics.add.existing(floor, true);
 
@@ -78,7 +95,11 @@ export class RunScene extends Phaser.Scene {
     const kb = this.input.keyboard;
     for (const k of ['Z', 'A', 'LEFT', 'SHIFT']) kb.on(`keydown-${k}`, () => this.transform());
     for (const k of ['SPACE', 'UP', 'X', 'RIGHT']) kb.on(`keydown-${k}`, () => this.jump());
-    this.input.on('pointerdown', (p) => (p.x < W / 2 ? this.transform() : this.jump()));
+    this.input.on('pointerdown', (p, over) => {
+      if (over.includes(this.muteBtn)) return;
+      if (p.x < W / 2) this.transform();
+      else this.jump();
+    });
   }
 
   transform() {
@@ -314,10 +335,19 @@ export class RunScene extends Phaser.Scene {
 
     this.scoreText = txt(W - 16, 12, '0', 38).setOrigin(1, 0);
     this.distText = txt(W - 16, 54, '0m', 20, '#4a3f5c').setOrigin(1, 0);
-    this.comboText = txt(W / 2, 64, '', 30, '#e8453c').setOrigin(0.5);
-    this.banner = txt(W / 2, 120, '', 30).setOrigin(0.5).setStroke('#fffaf0', 6);
+    this.comboText = txt(W / 2, PORTRAIT ? 110 : 86, '', 30, '#e8453c').setOrigin(0.5);
+    this.banner = txt(W / 2, PORTRAIT ? H * 0.2 : 120, '', PORTRAIT ? 28 : 30).setOrigin(0.5).setStroke('#fffaf0', 6).setWordWrapWidth(W - 40).setAlign('center');
     const f = FORMS[this.profile.fortune.todayElement];
     txt(W / 2, 16, `오늘은 ${f.name} 기운 ↑`, 18, '#4a3f5c').setOrigin(0.5, 0);
+    this.muteBtn = txt(W / 2, 40, '', 16, '#4a3f5c').setOrigin(0.5, 0).setPadding(8, 4).setInteractive({ useHandCursor: true });
+    const muteLabel = () => this.muteBtn.setText(isMuted() ? '🔇 소리 꺼짐' : '🔊 소리 켜짐');
+    muteLabel();
+    this.muteBtn.on('pointerdown', () => {
+      setMuted(!isMuted());
+      muteLabel();
+    });
+
+    if (PORTRAIT) return this.createPortraitControls(txt);
 
     // 왼쪽 아래: 지금 모양 + 다음 모양 / 오른쪽 아래: 점프
     this.add.rectangle(64, H - 60, 250, 84, 0xfffaf0, 0.92).setOrigin(0, 0.5).setStrokeStyle(3, 0x221a2e).setDepth(49);
@@ -328,6 +358,22 @@ export class RunScene extends Phaser.Scene {
     txt(120, H - 42, '← 왼쪽 탭: 변신', 15, '#4a3f5c');
     this.add.circle(W - 64, H - 60, 46, 0xfffaf0, 0.92).setStrokeStyle(4, 0x221a2e).setDepth(50);
     txt(W - 64, H - 60, '점프', 24).setOrigin(0.5);
+    this.updateFormBadge();
+  }
+
+  // 세로 화면: 땅 위에 큰 버튼 두 개 (왼쪽 변신 / 오른쪽 점프)
+  createPortraitControls(txt) {
+    const cy = GROUND_Y + (H - GROUND_Y) * 0.55;
+    const r = Math.min(110, (H - GROUND_Y) * 0.32);
+    const lx = W * 0.27;
+    const rx = W * 0.73;
+    this.add.circle(lx, cy, r, 0xfffaf0, 0.95).setStrokeStyle(5, 0x221a2e).setDepth(50);
+    this.add.circle(rx, cy, r, 0xfffaf0, 0.95).setStrokeStyle(5, 0x221a2e).setDepth(50);
+    this.formIcon = this.add.image(lx, cy - r * 0.18, `player-${this.run.form}`).setScale((r / 110) * 1.1).setDepth(51);
+    this.formText = txt(lx, cy + r * 0.55, '', 22).setOrigin(0.5);
+    this.nextText = txt(lx, cy + r + 22, '', 18, '#fffaf0').setOrigin(0.5);
+    txt(rx, cy, '점프', 40).setOrigin(0.5);
+    txt(rx, cy + r + 22, '작은 장애물 넘기', 18, '#fffaf0').setOrigin(0.5);
     this.updateFormBadge();
   }
 
@@ -388,8 +434,8 @@ export class RunScene extends Phaser.Scene {
       c.arc(5, 5, 5, 0, Math.PI * 2);
       c.fill();
     });
-    tex('sky', W, H, (c) => drawSky(c, W, H));
-    tex('hills', W, 160, (c) => drawHills(c, W, 160));
-    tex('ground', W, H - GROUND_Y, (c) => drawGround(c, W, H - GROUND_Y));
+    tex(`sky-${W}x${H}`, W, H, (c) => drawSky(c, W, H));
+    tex(`hills-${W}`, W, 160, (c) => drawHills(c, W, 160));
+    tex(`ground-${W}x${H - GROUND_Y}`, W, H - GROUND_Y, (c) => drawGround(c, W, H - GROUND_Y));
   }
 }

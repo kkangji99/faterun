@@ -4,8 +4,8 @@ import { FORMS } from './content.js';
 import { createProfile } from './profile.js';
 import { beats } from './rules.js';
 import { drawPlayer, drawClover } from './art.js';
-import { unlockAudio, setMuted, isMuted } from './sfx.js';
-import { RunScene, GAME_SIZE } from './RunScene.js';
+import { unlockAudio } from './sfx.js';
+import { RunScene, gameSizeFor } from './RunScene.js';
 import { buildResult, drawResultCard, hitTest, saveCard, shareCard } from './resultCard.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -17,9 +17,15 @@ const dateLabel = `${today.year}.${pad(today.month)}.${pad(today.day)}`;
 let profile = null;
 let game = null;
 
+// 폰 고해상도 화면에서 흐리지 않게 3배로 그린다. 그림 좌표는 canvas 의 width/height 속성 기준.
 function paint(canvas, draw) {
+  canvas.dataset.w ??= canvas.width;
+  canvas.dataset.h ??= canvas.height;
+  const scale = 3;
+  canvas.width = canvas.dataset.w * scale;
+  canvas.height = canvas.dataset.h * scale;
   const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
   draw(ctx);
 }
 
@@ -85,17 +91,18 @@ $('#start').addEventListener('click', async () => {
   startRun();
 });
 
-$('#mute').addEventListener('click', () => {
-  setMuted(!isMuted());
-  $('#mute').textContent = isMuted() ? '🔇 음소거' : '🔊 소리';
-});
-
 function startRun() {
   $('#reveal').hidden = true;
   $('#result').hidden = true;
   $('#game').hidden = false;
-  $('#mute').hidden = false;
+  document.body.classList.add('playing');
   const data = { profile, onGameOver: showResult };
+  // 가로/세로에 맞는 해상도. 화면을 돌린 뒤 다시 달리면 새 크기로 다시 만든다.
+  const size = gameSizeFor(window.innerWidth, window.innerHeight);
+  if (game && (game.config.width !== size.width || game.config.height !== size.height)) {
+    game.destroy(true);
+    game = null;
+  }
   if (game) {
     game.scene.start('RunScene', data);
     return;
@@ -103,7 +110,7 @@ function startRun() {
   game = new Phaser.Game({
     type: Phaser.AUTO,
     parent: 'game',
-    ...GAME_SIZE,
+    ...size,
     backgroundColor: '#fff4e0',
     physics: { default: 'arcade' },
     scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
