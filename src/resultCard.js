@@ -2,16 +2,16 @@
 //
 //  y 0–230     제목 · 날짜 · 오늘 운세
 //  y 250–760   본캐 캐릭터 그림 + 이름 + 팔자 한 줄 요약
-//  y 790–1010  상성 3칸: 천적 / 귀인 / 럭키템
+//  y 790–1010  3칸: 천적(피하기) / 내 색깔(먹기) / 럭키템
 //  y 1030–1100 팔자 스킬 칩
 //  y 1130–1350 사인(死因)
 //  y 1380–1600 액땜 성공률 + 한마디
-//  y 1630–1720 기록: 거리 · 부순 수 · 최고 콤보
+//  y 1630–1720 기록: 버틴 시간 · 아슬아슬 · 최고 콤보
 //  y 1760–1880 버튼(화면 전용) / 저장 이미지는 사주 원문 + 주소
 
 import { FORMS } from './content.js';
 import { STEMS, BRANCHES } from './saju/constants.js';
-import { drawPlayer, drawClover } from './art.js';
+import { drawPlayer, drawClover, drawDrop } from './art.js';
 import { deathLine, ackttemRate, ackttemComment } from './rules.js';
 
 export const CARD_W = 1080;
@@ -59,16 +59,17 @@ function wrap(ctx, s, maxW, size) {
 /** 결과 카드에 필요한 값 모으기 (사인은 한 번만 뽑아 화면·저장본이 같게) */
 export function buildResult(profile, run) {
   const rate = ackttemRate(run);
-  const death = deathLine(run);
+  const death = deathLine(profile, run);
+  const seconds = Math.floor(run.timeMs / 1000);
   return {
     death,
     rate,
     comment: ackttemComment(rate),
-    distance: Math.floor(run.distance),
-    smashes: run.smashes,
+    seconds,
+    nearMisses: run.nearMisses,
     maxCombo: run.maxCombo,
-    score: run.score,
-    share: `[운명 피하기] 나는 ${profile.character.name}! ${Math.floor(run.distance)}m 달리고 사인: ${death} / 오늘 액땜 ${rate}% 🍀`,
+    score: Math.floor(run.score),
+    share: `[운명 피하기] 나는 ${profile.character.name}! ${seconds}초 버티고 사인: ${death} / 오늘 액땜 ${rate}% 🍀`,
   };
 }
 
@@ -102,8 +103,8 @@ export function drawResultCard(ctx, profile, result, { date, includeButtons = tr
 
   // 상성 3칸
   const trio = [
-    ['내 천적', p.nemesis, '#ffe1dc'],
-    ['내 귀인', p.helper, '#e1f5e4'],
+    ['피해요! 천적', p.nemesis, '#ffe1dc'],
+    ['먹어요! 내 색깔', p.me, '#e1f5e4'],
     ['럭키템', p.lucky, '#fff3c4'],
   ];
   trio.forEach(([label, el, fill], i) => {
@@ -118,12 +119,12 @@ export function drawResultCard(ctx, profile, result, { date, includeButtons = tr
       ctx.restore();
     } else {
       ctx.save();
-      ctx.translate(x + 150 - 32, 905);
-      ctx.scale(0.8, 0.8);
-      drawPlayer(ctx, el);
+      ctx.translate(x + 150 - 38, 898);
+      ctx.scale(1.2, 1.2);
+      drawDrop(ctx, el, label.includes('내 색깔'));
       ctx.restore();
     }
-    text(ctx, FORMS[el].name, x + 150, 1005, 30, C.ink);
+    text(ctx, label === '럭키템' ? FORMS[el].name : FORMS[el].obstacle, x + 150, 1005, 30, C.ink);
   });
 
   // 팔자 스킬
@@ -161,8 +162,8 @@ export function drawResultCard(ctx, profile, result, { date, includeButtons = tr
 
   // 기록
   [
-    ['달린 거리', `${result.distance.toLocaleString()}m`],
-    ['부순 장애물', `${result.smashes}개`],
+    ['버틴 시간', `${result.seconds}초`],
+    ['아슬아슬', `${result.nearMisses}번`],
     ['최고 콤보', `${result.maxCombo}`],
   ].forEach(([label, value], i) => {
     const x = 200 + i * 340;

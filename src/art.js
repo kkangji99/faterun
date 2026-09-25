@@ -154,115 +154,138 @@ export function drawPlayer(ctx, form) {
   ctx.restore();
 }
 
-// ── 벽(못 넘는 큰 장애물): 96×170, 바닥이 (48, 170) ───────────────────
-export const WALL_SIZE = { w: 96, h: 170 };
+// ── 떨어지는 물체: 64×64, 가운데 (32, 32) ─────────────────────────────
+// friendly(내 색깔)면 웃는 얼굴 + 반짝이, 아니면 심술궂은 얼굴.
+export const DROP_SIZE = 64;
 
-export function drawWall(ctx, element) {
-  const { w, h } = WALL_SIZE;
+export function drawDrop(ctx, element, friendly) {
+  const { css } = FORMS[element];
+  const dark = shade(css, -50);
   ctx.save();
-  if (element === 0) {
-    // 가시덩굴
-    ctx.fillStyle = '#2f8a45';
-    ctx.beginPath();
-    ctx.roundRect(22, 8, 52, h - 8, 20);
+  ctx.lineJoin = 'round';
+  ctx.fillStyle = css;
+  ctx.strokeStyle = dark;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  if (element === 4) {
+    // 물폭탄: 풍선 + 매듭
+    ctx.ellipse(32, 30, 24, 26, 0, 0, TAU);
     ctx.fill();
-    ctx.fillStyle = '#1f6532';
-    for (let y = 20; y < h - 10; y += 26) {
-      for (const s of [-1, 1]) {
-        const x = s < 0 ? 22 : 74;
-        ctx.beginPath();
-        ctx.moveTo(x, y);
-        ctx.lineTo(x + s * 18, y + 8);
-        ctx.lineTo(x, y + 16);
-        ctx.fill();
-      }
-    }
-    circle(ctx, 60, 30, 8, '#ff6b8a');
-  } else if (element === 1) {
-    // 불기둥
-    const layer = (inset, color, top) => {
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.moveTo(inset, h);
-      for (let i = 0; i <= 4; i++) {
-        const x = inset + ((w - inset * 2) * i) / 4;
-        ctx.lineTo(x, top + (i % 2 ? 22 : 0));
-      }
-      ctx.lineTo(w - inset, h);
-      ctx.fill();
-    };
-    layer(6, '#e8453c', 4);
-    layer(18, '#ff8a2e', 34);
-    layer(30, '#ffd84a', 74);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(28, 57);
+    ctx.lineTo(32, 52);
+    ctx.lineTo(36, 57);
+    ctx.fill();
   } else if (element === 2) {
-    // 바위 탑
-    const rock = (y, rw, rh, c) => {
-      ctx.fillStyle = c;
-      ctx.beginPath();
-      ctx.ellipse(48, y, rw, rh, 0, 0, TAU);
-      ctx.fill();
-    };
-    rock(140, 46, 30, '#a67c1f');
-    rock(92, 40, 28, '#c9a227');
-    rock(46, 32, 26, '#dcb84a');
+    // 바위: 울퉁불퉁
+    ctx.moveTo(10, 40);
+    ctx.lineTo(14, 18);
+    ctx.lineTo(30, 8);
+    ctx.lineTo(50, 12);
+    ctx.lineTo(58, 32);
+    ctx.lineTo(52, 54);
+    ctx.lineTo(24, 58);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
   } else if (element === 3) {
-    // 거대 가위
-    ctx.strokeStyle = '#6b7a8c';
-    ctx.lineWidth = 8;
+    // 가위: 날 두 개 + 손잡이
+    ctx.fillStyle = '#dfe6ee';
     for (const s of [-1, 1]) {
-      ctx.fillStyle = '#c9d3de';
       ctx.beginPath();
-      ctx.moveTo(48, 100);
-      ctx.lineTo(48 + s * 34, 6);
-      ctx.lineTo(48 + s * 12, 10);
+      ctx.moveTo(32, 36);
+      ctx.lineTo(32 + s * 22, 2);
+      ctx.lineTo(32 + s * 6, 6);
       ctx.closePath();
       ctx.fill();
+      ctx.stroke();
       ctx.beginPath();
-      ctx.arc(48 + s * 20, 138, 17, 0, TAU);
+      ctx.arc(32 + s * 12, 50, 9, 0, TAU);
       ctx.stroke();
     }
-    circle(ctx, 48, 100, 7, '#6b7a8c');
+    ctx.fillStyle = css;
+    ctx.beginPath();
+    ctx.arc(32, 34, 13, 0, TAU);
+    ctx.fill();
+    ctx.stroke();
+  } else if (element === 1) {
+    // 불똥: 꼬리 달린 불덩이
+    ctx.fillStyle = '#ffb02e';
+    ctx.moveTo(14, 36);
+    ctx.quadraticCurveTo(20, 2, 32, 4);
+    ctx.quadraticCurveTo(44, 2, 50, 36);
+    ctx.fill();
+    ctx.fillStyle = css;
+    ctx.beginPath();
+    ctx.arc(32, 38, 20, 0, TAU);
+    ctx.fill();
+    ctx.stroke();
   } else {
-    // 물폭탄 3단
-    for (const [y, r] of [[140, 30], [88, 27], [40, 24]]) {
-      circle(ctx, 48, y, r, '#3a86e8');
-      circle(ctx, 40, y - r * 0.4, r * 0.25, 'rgba(255,255,255,0.6)');
+    // 가시덩굴 공
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * TAU;
+      ctx.moveTo(32 + Math.cos(a) * 18, 32 + Math.sin(a) * 18);
+      ctx.lineTo(32 + Math.cos(a + 0.2) * 30, 32 + Math.sin(a + 0.2) * 30);
+      ctx.lineTo(32 + Math.cos(a + 0.4) * 18, 32 + Math.sin(a + 0.4) * 18);
     }
+    ctx.fillStyle = dark;
+    ctx.fill();
+    circle(ctx, 32, 32, 20, css);
   }
-  // 모든 장애물은 심술궂은 눈
-  eyes(ctx, 48, h * 0.55, 13, 7, { angry: true, look: -2 });
+  const fy = element === 3 ? 34 : element === 1 ? 38 : 32;
+  const fx = 32;
+  if (friendly) {
+    eyes(ctx, fx, fy - 2, 8, 5, { look: 0 });
+    ctx.strokeStyle = '#221a2e';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(fx, fy + 5, 5, 0.1 * Math.PI, 0.9 * Math.PI);
+    ctx.stroke();
+    // 반짝이
+    ctx.fillStyle = '#fff6b0';
+    for (const [x, y, r] of [[8, 10, 5], [56, 14, 4], [54, 54, 3]]) {
+      ctx.beginPath();
+      ctx.moveTo(x, y - r * 2);
+      ctx.lineTo(x + r * 0.6, y);
+      ctx.lineTo(x, y + r * 2);
+      ctx.lineTo(x - r * 0.6, y);
+      ctx.fill();
+    }
+  } else {
+    eyes(ctx, fx, fy - 2, 8, 5, { angry: true, look: 0 });
+    ctx.strokeStyle = '#221a2e';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(fx, fy + 11, 5, 1.15 * Math.PI, 1.85 * Math.PI);
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
-// ── 작은 장애물(점프로 넘기): 60×52, 바닥이 (30, 52) ────────────────────
-export const SMALL_SIZE = { w: 60, h: 52 };
-
-export function drawSmall(ctx, element) {
-  const { css } = FORMS[element];
+/** 가시덩굴이 땅에서 솟는 모양: 48×110, 바닥이 (24, 110) */
+export function drawSprout(ctx, friendly) {
   ctx.save();
-  ctx.fillStyle = css;
+  ctx.fillStyle = friendly ? '#7fd66b' : '#2f8a45';
   ctx.beginPath();
-  if (element === 1) {
-    ctx.moveTo(6, 52);
-    ctx.quadraticCurveTo(10, 10, 30, 2);
-    ctx.quadraticCurveTo(50, 10, 54, 52);
-  } else if (element === 3) {
-    ctx.moveTo(4, 52);
-    ctx.lineTo(30, 4);
-    ctx.lineTo(56, 52);
-  } else if (element === 4) {
-    ctx.arc(30, 30, 22, 0, TAU);
-  } else if (element === 0) {
-    for (let i = 0; i < 5; i++) {
-      ctx.moveTo(6 + i * 12, 52);
-      ctx.lineTo(12 + i * 12, 14 + (i % 2) * 10);
-      ctx.lineTo(18 + i * 12, 52);
-    }
-  } else {
-    ctx.ellipse(30, 36, 28, 16, 0, 0, TAU);
-  }
+  ctx.moveTo(4, 110);
+  ctx.lineTo(24, 0);
+  ctx.lineTo(44, 110);
   ctx.fill();
-  eyes(ctx, 30, 36, 8, 5, { angry: true, look: -1 });
+  ctx.fillStyle = '#1f6532';
+  for (let y = 30; y < 100; y += 22) {
+    ctx.beginPath();
+    ctx.moveTo(24 - y * 0.18, y);
+    ctx.lineTo(24 - y * 0.18 - 10, y - 8);
+    ctx.lineTo(24 - y * 0.18, y + 6);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(24 + y * 0.18, y);
+    ctx.lineTo(24 + y * 0.18 + 10, y - 8);
+    ctx.lineTo(24 + y * 0.18, y + 6);
+    ctx.fill();
+  }
+  eyes(ctx, 24, 70, 7, 4.5, { angry: !friendly, look: 0 });
   ctx.restore();
 }
 
@@ -303,20 +326,6 @@ export function drawClover(ctx, element, fake = false) {
   }
   circle(ctx, 0, 0, 7, FORMS[element].css);
   ctx.restore();
-}
-
-/** 말풍선 힌트 바탕 */
-export function drawBubble(ctx) {
-  ctx.fillStyle = '#fffaf0';
-  ctx.strokeStyle = '#221a2e';
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.roundRect(4, 4, 56, 48, 16);
-  ctx.moveTo(26, 52);
-  ctx.lineTo(32, 64);
-  ctx.lineTo(38, 52);
-  ctx.fill();
-  ctx.stroke();
 }
 
 // ── 배경 ─────────────────────────────────────────────────────────

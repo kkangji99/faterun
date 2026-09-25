@@ -55,7 +55,7 @@
     .trio { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
     .trio > div { border: 2px solid var(--line); border-radius: 16px; padding: 8px 4px; display: grid; justify-items: center; font-family: var(--display); }
     .trio small { color: var(--sub); font-size: 14px; }
-    .trio canvas { width: 44px; height: 48px; }
+    .trio canvas { width: 48px; height: 48px; }
     .foe { background: #ffe1dc; } .friend { background: #e1f5e4; } .luck { background: #fff3c4; }
     .skills { display: flex; flex-wrap: wrap; gap: 8px; }
     .chip { background: #efe6ff; color: #4b2fb0; border: 2px solid var(--purple); border-radius: 999px; padding: 4px 12px; font-family: var(--display); }
@@ -63,7 +63,7 @@
     .fortune h2 { margin: 0; font: 24px var(--display); }
     .fortune p { margin: 0; }
     .how { display: grid; gap: 6px; font-size: 15px; }
-    .rps { display: flex; flex-wrap: wrap; gap: 6px 12px; font-family: var(--display); font-size: 17px; }
+    .rps { display: grid; gap: 4px; font-family: var(--display); font-size: 17px; }
     .sub-term { color: var(--sub); font-size: 12px; }
     /* 게임: 화면 전체를 쓰고, 탭이 확대·선택으로 새지 않게 */
     #game {
@@ -103,8 +103,8 @@
       <div class="summary" id="char-summary"></div>
     </div>
     <div class="trio">
-      <div class="foe"><small>내 천적</small><canvas id="foe-canvas" width="80" height="88"></canvas><span id="foe-name"></span></div>
-      <div class="friend"><small>내 귀인</small><canvas id="friend-canvas" width="80" height="88"></canvas><span id="friend-name"></span></div>
+      <div class="foe"><small>피해요! 천적</small><canvas id="foe-canvas" width="64" height="64"></canvas><span id="foe-name"></span></div>
+      <div class="friend"><small>먹어요! 내 색깔</small><canvas id="friend-canvas" width="64" height="64"></canvas><span id="friend-name"></span></div>
       <div class="luck"><small>럭키템</small><canvas id="luck-canvas" width="52" height="52"></canvas><span id="luck-name"></span></div>
     </div>
     <div class="card">
@@ -118,10 +118,10 @@
     </div>
     <div class="card how">
       <strong>하는 법</strong>
-      <div>👈 <b>왼쪽 탭</b> 변신 (나무→불→흙→쇠→물) · <b>오른쪽 탭</b> 점프 👉</div>
-      <div class="desc">PC: Z 변신 · Space 점프</div>
-      <div>큰 장애물은 <b>이기는 모양</b>으로 부수거나, <b>같은 모양</b>으로 통과!</div>
-      <div class="rps" id="rps"></div>
+      <div>👆 <b>손가락으로 좌우로 움직여서</b> 하늘에서 떨어지는 운명을 피해요 <span class="desc">(PC: ← →)</span></div>
+      <div>✨ <b id="how-friend"></b> 친구라 먹으면 점수! 나머지는 전부 피하기</div>
+      <div>😱 <b>아슬아슬하게</b> 피하면 보너스 + 럭키 게이지 → 가득 차면 럭키타임</div>
+      <div class="rps" id="moves"></div>
     </div>
     <button class="big" id="start">달리기!</button>
   </section>

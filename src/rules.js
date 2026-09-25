@@ -1,59 +1,41 @@
-// 오행 가위바위보 규칙. Phaser 없이 돌아가는 순수 로직이라 node 로 테스트한다.
+// 운명 피하기 규칙. 하늘에서 떨어지는 것들을 좌우로 움직여 피한다.
+// Phaser 없이 돌아가는 순수 로직이라 node 로 테스트한다.
 //
-// 모양 5개가 서로 물고 물린다:  나무 > 흙 > 물 > 불 > 쇠 > 나무
-// (사주 용어로 상극. 인덱스로는 a 가 b 를 이긴다 ⇔ (a + 2) % 5 === b)
-//
-// 장애물에 부딪혔을 때 내 모양 기준 결과:
-//   WIN   이기는 모양 → 부숨! 점수 + 콤보
-//   SAME  같은 모양   → 같은 편이라 스르륵 통과
-//   LOSE  지는 모양   → 하트 -2 (천적!)
-//   BUMP  그 외       → 하트 -1
+//   내 색깔(본캐 오행)  → 친구. 닿으면 먹어서 점수 + 콤보
+//   다른 색깔          → 운명. 닿으면 하트 -1
+//   아슬아슬하게 피함   → 보너스 점수 + 콤보 + 럭키 게이지
+//   럭키 게이지 가득 / 럭키템 → 럭키타임: 닿는 건 전부 코인으로
 
 import { FORMS, DEATH_LINES, ACKTTEM_COMMENTS, josa } from './content.js';
-
-export const OUTCOME = Object.freeze({ WIN: 'WIN', SAME: 'SAME', LOSE: 'LOSE', BUMP: 'BUMP' });
-
-export const beats = (a, b) => (a + 2) % 5 === b;
-export const counterOf = (element) => (element + 3) % 5; // element 를 이기는 모양
-export const nextForm = (form) => (form + 1) % 5;
-export const tapsTo = (from, to) => (to - from + 5) % 5;
-
-export function outcome(form, element) {
-  if (form === element) return OUTCOME.SAME;
-  if (beats(form, element)) return OUTCOME.WIN;
-  if (beats(element, form)) return OUTCOME.LOSE;
-  return OUTCOME.BUMP;
-}
 
 export const TUNING = {
   startHearts: 3,
   maxHearts: 5,
-  hurtInvincibleMs: 1000,
-  smashScore: 100,
-  passScore: 20,
-  mainFormMult: 2, //    본캐 모양으로 부수면 ×2
-  gaugePerSmash: 12,
-  luckyMs: 5000,
-  luckyScore: 150,
+  hurtInvincibleMs: 1200,
+  friendScore: 50,
+  nearMissScore: 30,
+  luckyScore: 40,
   coinValue: 10,
   fakePenalty: 300,
-  tigerChance: 0.3,
+  gaugePerFriend: 10,
+  gaugePerNearMiss: 8,
+  luckyMs: 5000,
+  survivePerSec: 10,
 };
 
 /** 콤보 5마다 배율 +0.5, 최대 ×3 */
 export const comboMult = (combo) => Math.min(3, 1 + Math.floor(combo / 5) * 0.5);
 
 export function createRun(profile) {
-  const hearts = Math.min(TUNING.maxHearts, TUNING.startHearts + (profile.mods.bonusHearts ?? 0));
   return {
-    form: profile.me,
-    hearts,
+    hearts: Math.min(TUNING.maxHearts, TUNING.startHearts + (profile.mods.bonusHearts ?? 0)),
     score: 0,
     coins: 0,
     combo: 0,
     maxCombo: 0,
-    smashes: 0,
-    distance: 0,
+    friends: 0, //    먹은 친구 수
+    nearMisses: 0, // 아슬아슬 회피 수
+    timeMs: 0, //     버틴 시간
     gauge: 0,
     luckyUntil: 0,
     luckyCount: 0,
@@ -78,64 +60,66 @@ export function startLucky(run, profile, now) {
   run.luckyCount++;
 }
 
-function smash(run, profile, now, element, reason) {
+function bump(run, profile, now, gauge) {
   run.combo++;
   run.maxCombo = Math.max(run.maxCombo, run.combo);
-  run.smashes++;
-  const main = run.form === profile.me ? TUNING.mainFormMult : 1;
-  const base = reason === 'LUCKY' ? TUNING.luckyScore : TUNING.smashScore * main;
-  const score = addScore(run, profile, base * comboMult(run.combo));
-  let lucky = false;
-  if (!isLucky(run, now)) {
-    run.gauge = Math.min(100, run.gauge + TUNING.gaugePerSmash);
-    if (run.gauge >= 100) {
-      startLucky(run, profile, now);
-      lucky = true;
-    }
-  }
-  return { type: 'SMASH', element, score, reason, combo: run.combo, mainForm: main > 1, lucky };
+  if (isLucky(run, now)) return false;
+  run.gauge = Math.min(100, run.gauge + gauge);
+  if (run.gauge < 100) return false;
+  startLucky(run, profile, now);
+  return true;
 }
 
-/** 모양 바꾸기 (나무→불→흙→쇠→물→나무) */
-export function changeForm(run) {
-  run.form = nextForm(run.form);
-  return run.form;
+/** 버틴 시간 점수 (매 프레임) */
+export function survive(run, profile, dtMs) {
+  run.timeMs += dtMs;
+  run.score += (TUNING.survivePerSec * (profile.mods.scoreMult ?? 1) * dtMs) / 1000;
 }
 
 /**
- * 장애물 충돌 판정.
- * @param {{element:number, swooned?:boolean}} obstacle
+ * 떨어지는 것에 닿았을 때.
+ * @param {{element:number}} drop
+ * @returns {{type:'FRIEND'|'LUCKY_COIN'|'DEFLECT'|'HURT'|'REVIVE'|'DEAD'|'NONE', ...}}
  */
-export function hitObstacle(run, profile, obstacle, now, rng = Math.random) {
-  if (run.dead || obstacle.swooned) return { type: 'NONE' };
-  if (isLucky(run, now)) return smash(run, profile, now, obstacle.element, 'LUCKY');
-
-  const result = outcome(run.form, obstacle.element);
-  if (result === OUTCOME.WIN) return smash(run, profile, now, obstacle.element, 'WIN');
-  if (result === OUTCOME.SAME) {
-    return { type: 'PASS', element: obstacle.element, score: addScore(run, profile, TUNING.passScore) };
+export function touchDrop(run, profile, drop, now, rng = Math.random) {
+  if (run.dead) return { type: 'NONE' };
+  if (drop.element === profile.me) {
+    run.friends++;
+    const score = addScore(run, profile, TUNING.friendScore * comboMult(run.combo + 1));
+    const lucky = bump(run, profile, now, TUNING.gaugePerFriend);
+    return { type: 'FRIEND', score, combo: run.combo, lucky };
+  }
+  if (isLucky(run, now)) {
+    const score = addScore(run, profile, TUNING.luckyScore);
+    run.combo++;
+    run.maxCombo = Math.max(run.maxCombo, run.combo);
+    return { type: 'LUCKY_COIN', score };
   }
   if (now < run.invUntil) return { type: 'NONE' };
-  if (result === OUTCOME.LOSE && rng() < (profile.mods.tigerChance ?? 0)) {
-    return smash(run, profile, now, obstacle.element, 'TIGER');
-  }
+  if (rng() < (profile.mods.tigerChance ?? 0)) return { type: 'DEFLECT' };
 
-  const damage = result === OUTCOME.LOSE ? 2 : 1;
-  run.hearts -= damage;
+  run.hearts -= 1;
   run.combo = 0;
   run.invUntil = now + TUNING.hurtInvincibleMs;
-  run.lastHit = { element: obstacle.element, form: run.form, result };
-  if (run.hearts > 0) return { type: 'HURT', element: obstacle.element, result, damage };
-
+  run.lastHit = { element: drop.element, nemesis: drop.element === profile.nemesis };
+  if (run.hearts > 0) return { type: 'HURT', element: drop.element };
   if (run.revives > 0) {
     run.revives--;
     run.hearts = 2;
     run.invUntil = now + 2000;
-    return { type: 'REVIVE', element: obstacle.element, result, damage };
+    return { type: 'REVIVE', element: drop.element };
   }
   run.hearts = 0;
   run.dead = true;
-  return { type: 'DEAD', element: obstacle.element, result, damage };
+  return { type: 'DEAD', element: drop.element };
+}
+
+/** 아슬아슬 회피 (운명 하나당 한 번) */
+export function nearMiss(run, profile, now) {
+  run.nearMisses++;
+  const score = addScore(run, profile, TUNING.nearMissScore * comboMult(run.combo + 1));
+  const lucky = bump(run, profile, now, TUNING.gaugePerNearMiss);
+  return { type: 'NEAR_MISS', score, combo: run.combo, lucky };
 }
 
 /** 아이템: COIN · HEART · LUCKY(럭키템) · FAKE(짝퉁 럭키템) */
@@ -161,34 +145,27 @@ export function pickItem(run, profile, item, now) {
 }
 
 // ── 결과 ──────────────────────────────────────────────────────
-const ro = (word) => {
-  const code = (word.charCodeAt(word.length - 1) - 0xac00) % 28;
-  return word + (code === 0 || code === 8 ? '로' : '으로'); // 받침 없음·ㄹ받침 → 로
-};
-
-export function deathLine(run, rng = Math.random) {
+export function deathLine(profile, run, rng = Math.random) {
   const hit = run.lastHit;
   if (!hit) return '원인 불명의 급살';
-  const list = DEATH_LINES[hit.result] ?? DEATH_LINES.BUMP;
-  const form = FORMS[hit.form];
+  const list = hit.nemesis ? DEATH_LINES.NEMESIS : DEATH_LINES.OTHER;
+  const me = FORMS[profile.me];
   const obs = FORMS[hit.element].obstacle;
   return list[Math.floor(rng() * list.length)]
-    .replace('{obs}', obs)
-    .replace('{form}{으로}', ro(form.name))
-    .replace('{form}', form.name)
-    .replace('{faint}', form.faint);
+    .replace('{obs이}', josa(obs, '이', '가'))
+    .replaceAll('{obs}', obs)
+    .replace('{faint}', me.faint);
 }
 
 /** 오늘의 액땜 성공률(%). 100%는 없다. */
 export function ackttemRate(run) {
   const rate =
-    40 * Math.min(1, run.distance / 1500) +
-    30 * Math.min(1, run.smashes / 40) +
-    20 * Math.min(1, run.maxCombo / 15) +
+    40 * Math.min(1, run.timeMs / 60000) +
+    20 * Math.min(1, run.nearMisses / 20) +
+    20 * Math.min(1, run.friends / 30) +
+    10 * Math.min(1, run.maxCombo / 20) +
     (run.luckyCount > 0 ? 10 : 0);
   return Math.min(99, Math.round(rate));
 }
 
 export const ackttemComment = (rate) => ACKTTEM_COMMENTS.find(([min]) => rate >= min)[1];
-
-export { josa };

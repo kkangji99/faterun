@@ -1,31 +1,31 @@
-// 오행 가위바위보 러너 — 메인 씬.
-// 규칙·점수는 rules.js, 장애물 배치는 patterns.js 가 정하고, 이 씬은 스폰·입력·연출만 한다.
+// 운명 피하기 — 메인 씬. 손가락으로 좌우로 움직여 하늘에서 떨어지는 운명을 피한다.
+// 규칙·점수는 rules.js, 떨어지는 패턴은 patterns.js 가 정하고, 이 씬은 움직임·충돌·연출만 한다.
+// 충돌은 원(circle) 거리로 직접 계산한다(물리 엔진 없음).
 // Phaser 는 index.html 에서 전역(window.Phaser)으로 로드한다.
 
 import { FORMS } from './content.js';
-import { counterOf, nextForm, createRun, hitObstacle, pickItem, changeForm, isLucky, comboMult } from './rules.js';
-import { nextChunk } from './patterns.js';
-import {
-  drawPlayer, drawWall, drawSmall, drawCoin, drawHeart, drawClover, drawBubble, drawSky, drawHills, drawGround,
-  PLAYER_SIZE, WALL_SIZE, SMALL_SIZE,
-} from './art.js';
+import { createRun, touchDrop, nearMiss, pickItem, survive, isLucky, comboMult } from './rules.js';
+import { nextWave } from './patterns.js';
+import { drawPlayer, drawDrop, drawSprout, drawCoin, drawHeart, drawClover, drawSky, drawHills, drawGround, PLAYER_SIZE, DROP_SIZE } from './art.js';
 import { sfx, setMuted, isMuted } from './sfx.js';
 
-// 화면 배치는 게임 크기로 정한다: 가로(960×540) 또는 세로(폭 600, 높이는 폰 비율).
-// 세로 화면은 땅을 아래쪽에 크게 두고 그 위에 큰 변신/점프 버튼을 놓는다.
+const FONT = '"Jua", "Noto Sans KR", sans-serif';
+const PLAYER_R = 24; //       플레이어 판정 반지름
+const DROP_R = 22; //         떨어지는 물체 판정 반지름 (그림보다 살짝 작게: 억울하지 않게)
+const NEAR_MARGIN = 30; //    이 안쪽으로 스치면 아슬아슬
+const MOVE_SPEED = 950; //    px/s
+
+// 화면 배치: 가로 960×540, 세로는 폭 600 + 폰 비율 높이
 let W = 960;
 let H = 540;
-let GROUND_Y = 440;
-let PLAYER_X = 200;
+let GROUND_Y = 470;
 let PORTRAIT = false;
-const PX_PER_M = 40;
 
 function applyLayout(width, height) {
   W = width;
   H = height;
   PORTRAIT = height > width;
-  GROUND_Y = PORTRAIT ? Math.round(height * 0.6) : 440;
-  PLAYER_X = PORTRAIT ? 110 : 200;
+  GROUND_Y = PORTRAIT ? H - 190 : H - 70;
 }
 
 /** 뷰포트 크기 → 게임 해상도 */
@@ -33,9 +33,6 @@ export function gameSizeFor(vw, vh) {
   if (vh <= vw) return { width: 960, height: 540 };
   return { width: 600, height: Math.max(900, Math.min(1400, Math.round((600 * vh) / vw))) };
 }
-const BASE_SPEED = 330; // px/s
-const FONT = '"Jua", "Noto Sans KR", sans-serif';
-
 
 export class RunScene extends Phaser.Scene {
   constructor() {
@@ -49,277 +46,360 @@ export class RunScene extends Phaser.Scene {
     this.onGameOver = data.onGameOver;
     this.run = createRun(this.profile);
     this.now = 0;
-    this.traveled = 0; //  지나온 거리(px)
-    this.cursor = 500; //   마지막으로 예약된 스폰 위치(px)
-    this.lastLuckyPos = 0;
-    this.pending = [];
-    this.freezeMs = 0; //   타격 순간 멈칫(히트스톱)
-    this.hintUntil = 0; //  지고 나면 잠깐 힌트를 다시 보여준다
+    this.queue = [];
+    this.nextAt = 600;
+    this.lastLuckyAt = 0;
+    this.drops = [];
+    this.targetX = null;
+    this.keys = { left: false, right: false };
+    this.freezeMs = 0;
     this.ending = false;
+    this.nemesisIntroduced = false;
   }
 
   create() {
     this.makeTextures();
-    this.physics.world.gravity.y = 2600;
-
     this.add.image(W / 2, H / 2, `sky-${W}x${H}`);
     this.hills = this.add.tileSprite(W / 2, GROUND_Y - 80, W, 160, `hills-${W}`);
-    this.ground = this.add.tileSprite(W / 2, GROUND_Y + (H - GROUND_Y) / 2, W, H - GROUND_Y, `ground-${W}x${H - GROUND_Y}`);
-    const floor = this.add.rectangle(W / 2, GROUND_Y + 20, W, 40, 0, 0);
-    this.physics.add.existing(floor, true);
+    this.add.tileSprite(W / 2, GROUND_Y + (H - GROUND_Y) / 2, W, H - GROUND_Y, `ground-${W}x${H - GROUND_Y}`);
 
-    // 발 기준 origin: 바디 바닥 = y
-    this.player = this.physics.add.sprite(PLAYER_X, GROUND_Y, `player-${this.run.form}`).setOrigin(0.5, 1).setDepth(10);
-    this.player.body.setSize(50, 70, false).setOffset(15, PLAYER_SIZE.h - 70);
-    this.physics.add.collider(this.player, floor);
-
-    this.hazards = this.physics.add.group({ allowGravity: false, immovable: true });
-    this.items = this.physics.add.group({ allowGravity: false });
-    this.physics.add.overlap(this.player, this.hazards, (_, o) => this.onHazard(o));
-    this.physics.add.overlap(this.player, this.items, (_, it) => this.onItem(it));
-
+    this.player = this.add.image(W / 2, GROUND_Y, `player-${this.profile.me}`).setOrigin(0.5, 1).setDepth(10);
     this.shards = this.add.particles(0, 0, 'dot', {
-      speed: { min: 180, max: 420 }, angle: { min: 200, max: 340 }, gravityY: 1200,
-      lifespan: 700, scale: { start: 1.4, end: 0 }, emitting: false,
+      speed: { min: 120, max: 380 }, angle: { min: 200, max: 340 }, gravityY: 1000,
+      lifespan: 650, scale: { start: 1.3, end: 0 }, emitting: false,
     }).setDepth(20);
 
     this.createHud();
     this.bindInput();
-    this.fillPending();
-    this.say('왼쪽 탭 = 변신 · 오른쪽 탭 = 점프', '#221a2e', 2600);
-    this.time.delayedCall(2800, () => this.say('이기는 모양으로 부딪히면 박살!', '#221a2e', 2200));
+    this.say('손가락으로 좌우로 움직여요', '#221a2e', 2200);
+    this.time.delayedCall(2400, () => this.say(`${FORMS[this.profile.me].emoji} 내 색깔은 친구! 먹으면 점수`, '#2f8a45', 2200));
   }
 
-  // ── 입력 ────────────────────────────────────────────────────────
+  // ── 입력: 드래그(손가락 위치로 이동) + 키보드 ←→ / A D ───────────────
   bindInput() {
+    const follow = (p) => {
+      if (!p.isDown || this.hitMute(p)) return;
+      this.targetX = p.x;
+    };
+    this.input.on('pointerdown', follow);
+    this.input.on('pointermove', follow);
+    this.input.on('pointerup', () => (this.targetX = null));
     const kb = this.input.keyboard;
-    for (const k of ['Z', 'A', 'LEFT', 'SHIFT']) kb.on(`keydown-${k}`, () => this.transform());
-    for (const k of ['SPACE', 'UP', 'X', 'RIGHT']) kb.on(`keydown-${k}`, () => this.jump());
-    this.input.on('pointerdown', (p, over) => {
-      if (over.includes(this.muteBtn)) return;
-      if (p.x < W / 2) this.transform();
-      else this.jump();
-    });
+    for (const [key, dir] of [['LEFT', 'left'], ['A', 'left'], ['RIGHT', 'right'], ['D', 'right']]) {
+      kb.on(`keydown-${key}`, () => {
+        this.keys[dir] = true;
+        this.targetX = null;
+      });
+      kb.on(`keyup-${key}`, () => (this.keys[dir] = false));
+    }
   }
 
-  transform() {
-    if (this.run.dead) return;
-    const form = changeForm(this.run);
-    this.player.setTexture(`player-${form}`);
-    this.tweens.killTweensOf(this.player);
-    this.player.setScale(1.3, 0.75);
-    this.tweens.add({ targets: this.player, scaleX: 1, scaleY: 1, duration: 180, ease: 'Back.Out' });
-    this.shards.setParticleTint?.(FORMS[form].color);
-    this.shards.explode(8, this.player.x, this.player.y - 40);
-    sfx.transform();
-    this.updateFormBadge();
+  hitMute(p) {
+    return this.muteBtn.getBounds().contains(p.x, p.y);
   }
 
-  jump() {
-    if (this.run.dead || !this.player.body.blocked.down) return;
-    this.player.setVelocityY(-900);
-    sfx.jump();
+  movePlayer(dt) {
+    const speed = MOVE_SPEED * (this.profile.mods.speedMult ?? 1);
+    let vx = 0;
+    if (this.targetX !== null) {
+      const d = this.targetX - this.player.x;
+      vx = Math.sign(d) * Math.min(Math.abs(d) / (dt / 1000), speed);
+    } else if (this.keys.left !== this.keys.right) {
+      vx = this.keys.left ? -speed : speed;
+    }
+    this.player.x = Phaser.Math.Clamp(this.player.x + (vx * dt) / 1000, 30, W - 30);
+    // 달리는 느낌: 기울기 + 통통 튀기
+    this.player.angle = Phaser.Math.Linear(this.player.angle, vx * 0.012, 0.3);
+    this.player.y = GROUND_Y - Math.abs(Math.sin(this.now / 90)) * (Math.abs(vx) > 50 ? 6 : 2);
   }
 
   // ── 스폰 ────────────────────────────────────────────────────────
-  fillPending() {
-    while (this.cursor - this.traveled < W + 800) {
-      const chunk = nextChunk({
-        rng: Math.random,
-        distanceM: this.traveled / PX_PER_M,
-        today: this.profile.fortune.todayElement,
-        lucky: this.profile.lucky,
-        fake: this.profile.fake,
-        sinceLuckyM: (this.cursor - this.lastLuckyPos) / PX_PER_M,
-        hearts: this.run.hearts,
-      });
-      for (const item of chunk) {
-        this.cursor += item.dx;
-        if (item.kind === 'LUCKY') this.lastLuckyPos = this.cursor;
-        this.pending.push({ ...item, pos: this.cursor });
+  spawnDue() {
+    while (this.now >= this.nextAt) {
+      if (!this.queue.length) {
+        const { items } = nextWave({
+          rng: Math.random,
+          timeMs: this.now,
+          me: this.profile.me,
+          nemesis: this.profile.nemesis,
+          today: this.profile.fortune.todayElement,
+          lucky: this.profile.lucky,
+          fake: this.profile.fake,
+          sinceLuckyMs: this.now - this.lastLuckyAt,
+          hearts: this.run.hearts,
+        });
+        if (items.some((it) => it.kind === 'LUCKY')) this.lastLuckyAt = this.now;
+        this.queue.push(...items);
+        this.nextAt += this.queue[0].at;
+        continue;
+      }
+      const spec = this.queue.shift();
+      this.spawn(spec);
+      this.nextAt += this.queue.length ? this.queue[0].at : 0;
+    }
+  }
+
+  spawn(spec) {
+    const x = spec.x === 'PLAYER' ? this.player.x : 30 + spec.x * (W - 60);
+    const friendly = spec.kind === 'DROP' && spec.element === this.profile.me;
+    const motion = spec.kind !== 'DROP' ? 'FALL' : friendly ? 'FALL' : spec.motion;
+    const d = { ...spec, x, y: -40, x0: x, vy: spec.speed, vx: 0, t: 0, friendly, motion, state: 'FALL', near: false, done: false };
+
+    const key = spec.kind === 'DROP' ? `drop-${spec.element}-${friendly ? 'f' : 'e'}`
+      : { COIN: 'coin', HEART: 'heart', LUCKY: `lucky-${spec.element}`, FAKE: `fake-${spec.element}` }[spec.kind];
+
+    if (motion === 'SPROUT') {
+      // 땅에서 솟기 전 예고 표시
+      d.state = 'WARN';
+      d.y = GROUND_Y;
+      d.sprite = this.add.image(x, GROUND_Y, 'sprout-e').setOrigin(0.5, 1).setScale(1, 0).setDepth(6);
+      d.warn = this.add.text(x, GROUND_Y - 24, '!', { fontFamily: FONT, fontSize: '40px', color: '#e8453c' }).setOrigin(0.5).setDepth(7).setStroke('#fffaf0', 6);
+      this.tweens.add({ targets: d.warn, alpha: 0.2, duration: 120, yoyo: true, repeat: 3 });
+    } else if (spec.x === 'PLAYER') {
+      // 저격: 위에서 조준 표시 후 떨어짐
+      d.state = 'AIM';
+      d.sprite = this.add.image(x, -40, key).setDepth(8);
+      d.warn = this.add.text(x, 70, '▼', { fontFamily: FONT, fontSize: '40px', color: '#e8453c' }).setOrigin(0.5).setDepth(7);
+      this.tweens.add({ targets: d.warn, alpha: 0.2, duration: 110, yoyo: true, repeat: 2 });
+    } else {
+      d.sprite = this.add.image(x, -40, key).setDepth(8);
+    }
+    d.swoon = !friendly && spec.kind === 'DROP' && Math.random() < (this.profile.mods.swoonChance ?? 0);
+
+    if (!friendly && spec.kind === 'DROP' && spec.element === this.profile.nemesis && !this.nemesisIntroduced) {
+      this.nemesisIntroduced = true;
+      this.time.delayedCall(300, () => this.say(`천적 ${FORMS[spec.element].obstacle} 등장! 조심`, '#e8453c', 1600));
+    }
+    this.drops.push(d);
+  }
+
+  // ── 떨어지는 것들 움직이기 ──────────────────────────────────────────
+  updateDrops(dt) {
+    const s = dt / 1000;
+    const px = this.player.x;
+    const py = GROUND_Y - 38;
+    const magnet = this.profile.mods.magnet;
+
+    for (const d of this.drops) {
+      if (d.done) continue;
+      d.t += dt;
+      switch (d.state) {
+        case 'WARN': // 가시덩굴 예고 → 솟기
+          if (d.t > 700) {
+            d.state = 'RISE';
+            d.warn.destroy();
+            d.t = 0;
+            this.tweens.add({ targets: d.sprite, scaleY: 1, duration: 120, ease: 'Back.Out' });
+          }
+          break;
+        case 'RISE':
+          if (d.t > 650) this.finishDrop(d, 'sink');
+          break;
+        case 'AIM':
+          if (d.t > 420) {
+            d.state = 'FALL';
+            d.warn.destroy();
+          }
+          break;
+        case 'FALL':
+          if (d.motion === 'HEAVY') d.vy += 1100 * s;
+          d.y += d.vy * s;
+          if (d.motion === 'ZIGZAG') d.x = d.x0 + Math.sin(d.t / 180) * 70;
+          if (d.swoon && Math.abs(d.x - px) < 170 && d.y > py - 260) {
+            d.swoon = false;
+            d.harmless = true;
+            d.vx = Math.sign(d.x - px || 1) * 500;
+            d.sprite.setAlpha(0.6);
+            this.floatText(d.x, d.y - 30, '♥ 반했어요', '#ff5d8f');
+          }
+          d.x += d.vx * s;
+          if ((magnet && (d.friendly || d.kind === 'COIN')) && Math.abs(d.x - px) < 160 && d.y > py - 220) {
+            d.x += (px - d.x) * Math.min(1, s * 8);
+          }
+          if (d.y >= GROUND_Y - DROP_R) this.onLand(d, px);
+          break;
+        case 'ROLL':
+          d.x += d.vx * s;
+          d.sprite.angle += d.vx * s * 3;
+          d.rolled += Math.abs(d.vx * s);
+          if (d.rolled > 220 || d.x < -40 || d.x > W + 40) this.finishDrop(d, 'fade');
+          break;
+      }
+      if (d.done) continue;
+      d.sprite.setPosition(d.x, d.state === 'RISE' || d.state === 'WARN' ? GROUND_Y : d.y);
+      if (d.motion === 'ZIGZAG' && d.state === 'FALL') d.sprite.angle = Math.sin(d.t / 180) * 25;
+      this.checkTouch(d, px, py);
+    }
+    this.drops = this.drops.filter((d) => !d.done);
+  }
+
+  onLand(d, px) {
+    d.y = GROUND_Y - DROP_R;
+    if (d.kind !== 'DROP' || d.friendly || d.harmless) return this.finishDrop(d, 'fade');
+    if (d.motion === 'ROLL') {
+      // 불똥: 플레이어 쪽으로 조금 굴러온다
+      d.state = 'ROLL';
+      d.rolled = 0;
+      d.vx = (px >= d.x ? 1 : -1) * 320;
+      return;
+    }
+    if (d.motion === 'POP') {
+      // 물폭탄: 바닥에서 펑 (주변까지 튄다)
+      const dist = Math.abs(this.player.x - d.x);
+      this.burst(d.x, GROUND_Y - 10, d.element, 14);
+      const splash = this.add.circle(d.x, GROUND_Y - 10, 20, FORMS[d.element].color, 0.5).setDepth(9);
+      this.tweens.add({ targets: splash, radius: 64, alpha: 0, duration: 260, onComplete: () => splash.destroy() });
+      if (!d.touched && dist < 62) this.hitBy(d);
+      else if (!d.touched && dist < 62 + NEAR_MARGIN) this.onNearMiss(d);
+      return this.finishDrop(d, 'none');
+    }
+    // 바위·가위 등: 쿵 하고 사라짐
+    if (d.motion === 'HEAVY') this.cameras.main.shake(60, 0.004);
+    this.finishDrop(d, 'fade');
+  }
+
+  checkTouch(d, px, py) {
+    if (d.touched || d.harmless) return;
+    let dx;
+    let dy;
+    if (d.state === 'RISE') {
+      // 솟은 가시: 세로 막대 판정
+      dx = Math.abs(d.x - px);
+      dy = 0;
+      if (dx < PLAYER_R + 16) return this.hitBy(d);
+      if (!d.near && dx < PLAYER_R + 16 + NEAR_MARGIN) this.onNearMiss(d);
+      return;
+    }
+    if (d.state === 'WARN' || d.state === 'AIM') return;
+    dx = d.x - px;
+    dy = d.y - py;
+    const r = d.kind === 'DROP' ? DROP_R : 20;
+    const dist = Math.hypot(dx, dy);
+    if (dist < r + PLAYER_R) {
+      if (d.kind === 'DROP') return this.hitBy(d);
+      return this.collect(d);
+    }
+    // 머리 위를 지나 아래로 내려갔는데 아슬아슬하게 비껴갔다
+    if (d.kind === 'DROP' && !d.friendly && !d.near && d.state === 'FALL' && dy > 0 && Math.abs(dx) < r + PLAYER_R + NEAR_MARGIN) {
+      this.onNearMiss(d);
+    }
+  }
+
+  hitBy(d) {
+    d.touched = true;
+    const ev = touchDrop(this.run, this.profile, d, this.now);
+    switch (ev.type) {
+      case 'FRIEND':
+        this.burst(d.x, d.y, d.element, 10);
+        this.finishDrop(d, 'none');
+        sfx.smash(ev.combo);
+        this.floatText(d.x, d.y - 30, `+${ev.score}`, '#2f8a45');
+        this.bumpCombo();
+        if (ev.lucky) this.onLuckyStart();
+        break;
+      case 'LUCKY_COIN':
+        this.burst(d.x, d.y, d.element, 10);
+        this.finishDrop(d, 'none');
+        sfx.coin();
+        this.floatText(d.x, d.y - 30, `+${ev.score}`, '#c98a00');
+        break;
+      case 'DEFLECT':
+        d.harmless = true;
+        d.vx = Math.sign(d.x - this.player.x || 1) * 700;
+        d.vy = -400;
+        this.floatText(this.player.x, GROUND_Y - 110, '🐯 튕겨냄!', '#e8453c');
+        sfx.smash(1);
+        break;
+      case 'NONE':
+        d.touched = false; // 무적 중: 나중에 다시 닿을 수 있게
+        break;
+      default: {
+        // HURT · REVIVE · DEAD
+        this.burst(d.x, d.y, d.element, 16);
+        this.finishDrop(d, 'none');
+        sfx.hurt();
+        this.freezeMs = 70;
+        this.cameras.main.shake(220, 0.018);
+        this.cameras.main.flash(150, 255, 90, 90);
+        const nemesis = d.element === this.profile.nemesis;
+        this.say(nemesis ? `천적 ${FORMS[d.element].obstacle}! 하트 -1` : `아야! ${FORMS[d.element].obstacle} 조심`, '#e8453c');
+        if (ev.type === 'REVIVE') this.time.delayedCall(700, () => this.say('🧘 해탈 도사 부활!', '#6b4bd6'));
+        if (ev.type === 'DEAD') this.finish();
       }
     }
   }
 
-  spawnDue() {
-    while (this.pending.length && PLAYER_X + this.pending[0].pos - this.traveled <= W + 120) {
-      const spec = this.pending.shift();
-      const x = PLAYER_X + spec.pos - this.traveled;
-      if (spec.kind === 'WALL' || spec.kind === 'SMALL') this.spawnHazard(spec, x);
-      else this.spawnItem(spec, x);
+  collect(d) {
+    d.touched = true;
+    const ev = pickItem(this.run, this.profile, d, this.now);
+    this.finishDrop(d, 'none');
+    switch (ev.type) {
+      case 'COIN': sfx.coin(); break;
+      case 'HEART': sfx.pass(); this.floatText(d.x, d.y - 30, '하트 +1', '#ff4d6d'); break;
+      case 'LUCKY': this.onLuckyStart(); break;
+      case 'FAKE': sfx.fake(); this.say('짝퉁 럭키템이었다… 게이지 0', '#8a6d1f'); break;
     }
   }
 
-  spawnHazard(spec, x) {
-    const wall = spec.kind === 'WALL';
-    const o = this.hazards.create(x, GROUND_Y, `${wall ? 'wall' : 'small'}-${spec.element}`).setOrigin(0.5, 1).setDepth(5);
-    if (wall) o.body.setSize(60, WALL_SIZE.h - 10, false).setOffset(18, 10);
-    else o.body.setSize(44, 40, false).setOffset(8, SMALL_SIZE.h - 40);
-    const model = { ...spec, handled: false };
-    model.swooned = Math.random() < (this.profile.mods.swoonChance ?? 0);
-    o.setData('model', model);
-
-    // 초보 힌트: 이 벽을 이기는 모양을 말풍선으로
-    if (wall && (this.run.smashes < 12 || this.now < this.hintUntil)) {
-      const top = GROUND_Y - WALL_SIZE.h - 40;
-      const bubble = this.add.image(x, top, 'bubble').setDepth(6);
-      const icon = this.add.image(x, top - 6, `player-${counterOf(spec.element)}`).setScale(0.45).setDepth(7);
-      o.setData('hint', [bubble, icon]);
-    }
+  onNearMiss(d) {
+    d.near = true;
+    if (this.run.dead) return;
+    const ev = nearMiss(this.run, this.profile, this.now);
+    sfx.pass();
+    this.floatText(this.player.x, GROUND_Y - 120, `아슬아슬! +${ev.score}`, '#6b4bd6');
+    this.bumpCombo();
+    if (ev.lucky) this.onLuckyStart();
   }
 
-  spawnItem(spec, x) {
-    const key = { COIN: 'coin', HEART: 'heart', LUCKY: `lucky-${spec.element}`, FAKE: `fake-${spec.element}` }[spec.kind];
-    const y = spec.kind === 'COIN' ? (spec.high ? GROUND_Y - 130 : GROUND_Y - 40) : GROUND_Y - 70;
-    const it = this.items.create(x, y, key).setDepth(8);
-    it.setData('model', { ...spec });
-    if (spec.kind === 'LUCKY' || spec.kind === 'FAKE') {
-      this.tweens.add({ targets: it, y: y - 12, duration: 500, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
-    }
+  finishDrop(d, how) {
+    d.done = true;
+    d.warn?.destroy();
+    const s = d.sprite;
+    if (how === 'none') return s.destroy();
+    if (how === 'sink') return this.tweens.add({ targets: s, scaleY: 0, duration: 150, onComplete: () => s.destroy() });
+    this.tweens.add({ targets: s, alpha: 0, duration: 200, onComplete: () => s.destroy() });
+  }
+
+  burst(x, y, element, n) {
+    this.shards.setParticleTint?.(FORMS[element].color);
+    this.shards.explode(n, x, y);
+  }
+
+  onLuckyStart() {
+    sfx.lucky();
+    this.say('🍀 럭키타임! 다 먹어버려!', '#2f8a45', 1400);
+    this.cameras.main.flash(200, 255, 230, 120);
   }
 
   // ── 메인 루프 ─────────────────────────────────────────────────────
   update(_, dt) {
     if (this.ending) return;
-    this.now += dt;
-    const now = this.now;
-
+    dt = Math.min(dt, 50); // 탭 전환 등으로 한 프레임이 길어져도 순간이동하지 않게
     if (this.freezeMs > 0) {
       this.freezeMs -= dt;
       return;
     }
-
-    const lucky = isLucky(this.run, now);
-    const ramp = 1 + Math.min(0.9, this.traveled / PX_PER_M / 3000);
-    const speed = BASE_SPEED * (this.profile.mods.speedMult ?? 1) * ramp * (lucky ? 1.4 : 1);
-    const dx = (speed * dt) / 1000;
-    this.traveled += dx;
-    this.run.distance = this.traveled / PX_PER_M;
-
-    this.hills.tilePositionX += dx * 0.2;
-    this.ground.tilePositionX += dx;
-
-    this.fillPending();
+    this.now += dt;
+    survive(this.run, this.profile, dt);
+    this.movePlayer(dt);
     this.spawnDue();
-    this.scrollObjects();
+    this.updateDrops(dt);
+    this.hills.tilePositionX += dt * 0.02;
 
-    // 럭키타임 연출
-    this.luckyOverlay.setAlpha(lucky ? 0.12 + 0.06 * Math.sin(now / 80) : 0);
-    if (lucky) this.player.setTint(Phaser.Display.Color.HSVToRGB((now / 600) % 1, 0.5, 1).color);
+    const lucky = isLucky(this.run, this.now);
+    this.luckyOverlay.setAlpha(lucky ? 0.12 + 0.06 * Math.sin(this.now / 80) : 0);
+    if (lucky) this.player.setTint(Phaser.Display.Color.HSVToRGB((this.now / 600) % 1, 0.5, 1).color);
     else this.player.clearTint();
-    this.player.setAlpha(now < this.run.invUntil && !lucky ? 0.5 + 0.3 * Math.sin(now / 40) : 1);
-
-    this.updateHud(now);
-  }
-
-  scrollObjects() {
-    const place = (o) => {
-      const m = o.getData('model');
-      o.x = PLAYER_X + m.pos - this.traveled;
-      for (const h of o.getData('hint') ?? []) h.x = o.x;
-      if (o.x < -120) this.destroyHazard(o);
-      return m;
-    };
-    for (const o of [...this.hazards.getChildren()]) {
-      const m = place(o);
-      // 인기쟁이: 장애물이 반해서 비켜준다
-      if (m.swooned && !m.handled && o.x < PLAYER_X + 260) {
-        m.handled = true;
-        this.tweens.add({ targets: o, y: GROUND_Y - 260, alpha: 0, duration: 500, ease: 'Back.In' });
-        this.floatText(o.x, GROUND_Y - WALL_SIZE.h, '♥ 반했어요', '#ff5d8f');
-      }
-    }
-    const magnet = this.profile.mods.magnet;
-    for (const it of [...this.items.getChildren()]) {
-      const m = it.getData('model');
-      if (m.pulled) {
-        it.x += (this.player.x - it.x) * 0.25;
-        it.y += (this.player.y - 40 - it.y) * 0.25;
-      } else {
-        it.x = PLAYER_X + m.pos - this.traveled;
-        if (magnet && m.kind === 'COIN' && Math.abs(it.x - this.player.x) < 170) m.pulled = true;
-      }
-      if (it.x < -60) it.destroy();
-    }
-  }
-
-  destroyHazard(o) {
-    for (const h of o.getData('hint') ?? []) h.destroy();
-    o.destroy();
-  }
-
-  // ── 충돌 ────────────────────────────────────────────────────────
-  onHazard(o) {
-    const m = o.getData('model');
-    if (m.handled) return;
-    const ev = hitObstacle(this.run, this.profile, m, this.now);
-    if (ev.type === 'NONE') return;
-    m.handled = true;
-    const obsName = FORMS[m.element].obstacle;
-
-    switch (ev.type) {
-      case 'SMASH': {
-        this.shards.setParticleTint?.(FORMS[m.element].color);
-        this.shards.explode(18, o.x, o.y - o.displayHeight / 2);
-        this.destroyHazard(o);
-        this.freezeMs = 45;
-        this.cameras.main.shake(90, 0.006);
-        sfx.smash(ev.combo);
-        const label = ev.reason === 'TIGER' ? '🐯 들이받기!' : ev.mainForm ? `본캐 보너스 +${ev.score}` : `+${ev.score}`;
-        this.floatText(o.x, GROUND_Y - 190, label, ev.mainForm ? '#e8453c' : '#221a2e');
-        if (ev.combo >= 3) this.bumpCombo();
-        if (ev.lucky) this.onLuckyStart();
-        break;
-      }
-      case 'PASS':
-        o.setAlpha(0.35);
-        this.floatText(o.x, GROUND_Y - 190, '같은 편~ 통과', '#2f8a6b');
-        sfx.pass();
-        break;
-      case 'HURT':
-      case 'REVIVE':
-      case 'DEAD': {
-        sfx.hurt();
-        this.cameras.main.shake(220, 0.016);
-        this.cameras.main.flash(160, 255, 90, 90);
-        this.hintUntil = this.now + 8000;
-        const me = FORMS[this.run.lastHit.form].name;
-        if (ev.result === 'LOSE') this.say(`천적! ${obsName} > ${me}  (하트 -2)`, '#e8453c');
-        else this.say(`아야! 이기는 모양으로 부숴봐요 (하트 -1)`, '#e8453c');
-        if (ev.type === 'REVIVE') this.time.delayedCall(700, () => this.say('🧘 해탈 도사 부활!', '#6b4bd6'));
-        if (ev.type === 'DEAD') this.finish();
-        break;
-      }
-    }
-  }
-
-  onItem(it) {
-    const ev = pickItem(this.run, this.profile, it.getData('model'), this.now);
-    it.destroy();
-    switch (ev.type) {
-      case 'COIN': sfx.coin(); break;
-      case 'HEART': sfx.pass(); this.floatText(this.player.x, GROUND_Y - 130, '하트 +1', '#ff4d6d'); break;
-      case 'LUCKY': this.onLuckyStart(); break;
-      case 'FAKE':
-        sfx.fake();
-        this.say('짝퉁 럭키템이었다… 게이지 0', '#8a6d1f');
-        break;
-    }
-  }
-
-  onLuckyStart() {
-    sfx.lucky();
-    this.say('🍀 럭키타임! 다 부숴버려!', '#2f8a45', 1400);
-    this.cameras.main.flash(200, 255, 230, 120);
+    this.player.setAlpha(this.now < this.run.invUntil && !lucky ? 0.5 + 0.3 * Math.sin(this.now / 40) : 1);
+    this.updateHud();
   }
 
   finish() {
     this.ending = true;
     sfx.dead();
-    this.physics.pause();
     this.player.clearTint().setAlpha(1);
-    this.tweens.add({ targets: this.player, angle: -90, y: GROUND_Y + 10, duration: 500, ease: 'Quad.In' });
-    this.time.delayedCall(1100, () => this.onGameOver?.(this.run));
+    this.tweens.add({ targets: this.player, angle: -90, duration: 400, ease: 'Quad.In' });
+    this.time.delayedCall(1000, () => this.onGameOver?.(this.run));
   }
 
   // ── HUD ────────────────────────────────────────────────────────
@@ -329,17 +409,18 @@ export class RunScene extends Phaser.Scene {
 
     this.luckyOverlay = this.add.rectangle(W / 2, H / 2, W, H, 0xffd84a, 0).setDepth(40);
     this.hearts = Array.from({ length: 5 }, (_, i) => this.add.image(28 + i * 36, 30, 'heart').setDepth(50));
-    this.gaugeBg = this.add.rectangle(16, 58, 176, 12, 0xffffff, 0.7).setOrigin(0, 0.5).setDepth(50);
+    this.add.rectangle(16, 58, 176, 12, 0xffffff, 0.7).setOrigin(0, 0.5).setDepth(50);
     this.gaugeBar = this.add.rectangle(16, 58, 0, 12, 0x43c463).setOrigin(0, 0.5).setDepth(51);
     txt(16, 68, '럭키 게이지', 14, '#2f5a3a');
 
     this.scoreText = txt(W - 16, 12, '0', 38).setOrigin(1, 0);
-    this.distText = txt(W - 16, 54, '0m', 20, '#4a3f5c').setOrigin(1, 0);
-    this.comboText = txt(W / 2, PORTRAIT ? 110 : 86, '', 30, '#e8453c').setOrigin(0.5);
-    this.banner = txt(W / 2, PORTRAIT ? H * 0.2 : 120, '', PORTRAIT ? 28 : 30).setOrigin(0.5).setStroke('#fffaf0', 6).setWordWrapWidth(W - 40).setAlign('center');
+    this.timeText = txt(W - 16, 54, '0초', 20, '#4a3f5c').setOrigin(1, 0);
+    this.comboText = txt(W / 2, PORTRAIT ? 116 : 96, '', 28, '#6b4bd6').setOrigin(0.5).setStroke('#fffaf0', 5);
+    this.banner = txt(W / 2, PORTRAIT ? H * 0.22 : 130, '', PORTRAIT ? 28 : 30)
+      .setOrigin(0.5).setStroke('#fffaf0', 6).setWordWrapWidth(W - 40).setAlign('center');
     const f = FORMS[this.profile.fortune.todayElement];
     txt(W / 2, 16, `오늘은 ${f.name} 기운 ↑`, 18, '#4a3f5c').setOrigin(0.5, 0);
-    this.muteBtn = txt(W / 2, 40, '', 16, '#4a3f5c').setOrigin(0.5, 0).setPadding(8, 4).setInteractive({ useHandCursor: true });
+    this.muteBtn = txt(W / 2, 40, '', 16, '#4a3f5c').setOrigin(0.5, 0).setPadding(10, 6).setInteractive({ useHandCursor: true });
     const muteLabel = () => this.muteBtn.setText(isMuted() ? '🔇 소리 꺼짐' : '🔊 소리 켜짐');
     muteLabel();
     this.muteBtn.on('pointerdown', () => {
@@ -347,51 +428,22 @@ export class RunScene extends Phaser.Scene {
       muteLabel();
     });
 
-    if (PORTRAIT) return this.createPortraitControls(txt);
-
-    // 왼쪽 아래: 지금 모양 + 다음 모양 / 오른쪽 아래: 점프
-    this.add.rectangle(64, H - 60, 250, 84, 0xfffaf0, 0.92).setOrigin(0, 0.5).setStrokeStyle(3, 0x221a2e).setDepth(49);
-    this.add.circle(64, H - 60, 46, 0xfffaf0, 1).setStrokeStyle(4, 0x221a2e).setDepth(50);
-    this.formIcon = this.add.image(64, H - 60, `player-${this.run.form}`).setScale(0.8).setDepth(51);
-    this.formText = txt(120, H - 94, '', 22);
-    this.nextText = txt(120, H - 66, '', 18, '#4a3f5c');
-    txt(120, H - 42, '← 왼쪽 탭: 변신', 15, '#4a3f5c');
-    this.add.circle(W - 64, H - 60, 46, 0xfffaf0, 0.92).setStrokeStyle(4, 0x221a2e).setDepth(50);
-    txt(W - 64, H - 60, '점프', 24).setOrigin(0.5);
-    this.updateFormBadge();
-  }
-
-  // 세로 화면: 땅 위에 큰 버튼 두 개 (왼쪽 변신 / 오른쪽 점프)
-  createPortraitControls(txt) {
-    const cy = GROUND_Y + (H - GROUND_Y) * 0.55;
-    const r = Math.min(110, (H - GROUND_Y) * 0.32);
-    const lx = W * 0.27;
-    const rx = W * 0.73;
-    this.add.circle(lx, cy, r, 0xfffaf0, 0.95).setStrokeStyle(5, 0x221a2e).setDepth(50);
-    this.add.circle(rx, cy, r, 0xfffaf0, 0.95).setStrokeStyle(5, 0x221a2e).setDepth(50);
-    this.formIcon = this.add.image(lx, cy - r * 0.18, `player-${this.run.form}`).setScale((r / 110) * 1.1).setDepth(51);
-    this.formText = txt(lx, cy + r * 0.55, '', 22).setOrigin(0.5);
-    this.nextText = txt(lx, cy + r + 22, '', 18, '#fffaf0').setOrigin(0.5);
-    txt(rx, cy, '점프', 40).setOrigin(0.5);
-    txt(rx, cy + r + 22, '작은 장애물 넘기', 18, '#fffaf0').setOrigin(0.5);
-    this.updateFormBadge();
-  }
-
-  updateFormBadge() {
-    const f = this.run.form;
-    this.formIcon.setTexture(`player-${f}`);
-    const main = f === this.profile.me ? ' (본캐)' : '';
-    this.formText.setText(`지금: ${FORMS[f].name}${main}`);
-    this.nextText.setText(`다음: ${FORMS[nextForm(f)].name}`);
+    // 바닥 안내: 친구/천적 표시
+    const me = FORMS[this.profile.me];
+    const foe = FORMS[this.profile.nemesis];
+    const hintY = PORTRAIT ? GROUND_Y + 90 : H - 26;
+    txt(W / 2, hintY, `${me.emoji} 내 색깔은 먹기   ·   ${foe.emoji} 천적 ${foe.obstacle} 피하기`, PORTRAIT ? 22 : 18, '#fffaf0').setOrigin(0.5).setStroke('#8a2a22', 5);
+    if (PORTRAIT) txt(W / 2, hintY + 44, '← 손가락으로 좌우 드래그 →', 20, '#ffe3c2').setOrigin(0.5);
   }
 
   updateHud() {
     const r = this.run;
     this.hearts.forEach((h, i) => h.setVisible(i < Math.max(r.hearts, 3)).setAlpha(i < r.hearts ? 1 : 0.2));
     this.gaugeBar.width = 176 * (r.gauge / 100);
-    this.scoreText.setText(r.score.toLocaleString());
-    this.distText.setText(`${Math.floor(r.distance)}m`);
-    this.comboText.setText(r.combo >= 3 ? `${r.combo} 콤보 ×${comboMult(r.combo)}` : '');
+    this.scoreText.setText(Math.floor(r.score).toLocaleString());
+    this.timeText.setText(`${Math.floor(r.timeMs / 1000)}초`);
+    const mult = comboMult(r.combo);
+    this.comboText.setText(r.combo >= 3 ? `${r.combo} 콤보${mult > 1 ? ` 점수 ×${mult}` : ''}` : '');
   }
 
   bumpCombo() {
@@ -420,14 +472,14 @@ export class RunScene extends Phaser.Scene {
     };
     for (let e = 0; e < 5; e++) {
       tex(`player-${e}`, PLAYER_SIZE.w, PLAYER_SIZE.h, (c) => drawPlayer(c, e));
-      tex(`wall-${e}`, WALL_SIZE.w, WALL_SIZE.h, (c) => drawWall(c, e));
-      tex(`small-${e}`, SMALL_SIZE.w, SMALL_SIZE.h, (c) => drawSmall(c, e));
+      tex(`drop-${e}-f`, DROP_SIZE, DROP_SIZE, (c) => drawDrop(c, e, true));
+      tex(`drop-${e}-e`, DROP_SIZE, DROP_SIZE, (c) => drawDrop(c, e, false));
       tex(`lucky-${e}`, 52, 52, (c) => drawClover(c, e));
       tex(`fake-${e}`, 52, 52, (c) => drawClover(c, e, true));
     }
+    tex('sprout-e', 48, 110, (c) => drawSprout(c, false));
     tex('coin', 32, 32, drawCoin);
     tex('heart', 32, 30, (c) => drawHeart(c));
-    tex('bubble', 64, 68, drawBubble);
     tex('dot', 10, 10, (c) => {
       c.fillStyle = '#fff';
       c.beginPath();

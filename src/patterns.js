@@ -1,67 +1,87 @@
-// 장애물 패턴 생성기. 완전 랜덤 대신 "덩어리(chunk)" 단위로 리듬을 만든다.
-// 모든 간격은 px(거리) 기준이라 속도가 빨라지면 자연스럽게 템포가 올라간다.
+// 떨어지는 것들의 패턴 생성기. 시간이 지날수록 빨라지고 촘촘해진다.
 //
-// 스폰 항목: { dx, kind, element? }
-//   dx   직전 항목으로부터의 거리(px)
-//   kind 'WALL'(못 넘음, 모양으로 부수거나 같은 모양으로 통과) · 'SMALL'(점프로 넘기 가능)
-//        'COIN' · 'HEART' · 'LUCKY' · 'FAKE'
+// 스폰 항목: { at, x, kind, element?, motion?, speed? }
+//   at      직전 항목으로부터의 시간(ms)
+//   x       0~1 가로 위치 비율, 'PLAYER' 면 스폰 순간 플레이어 위치를 노린다
+//   kind    'DROP'(오행 물체) · 'COIN' · 'HEART' · 'LUCKY' · 'FAKE'
+//   motion  오행마다 움직임이 다르다 → 보면서 자연스럽게 익힌다
+//           물 POP(떨어져 펑) · 흙 HEAVY(빠르게 쿵) · 쇠 ZIGZAG(지그재그)
+//           불 ROLL(떨어진 뒤 굴러감) · 나무 SPROUT(땅에서 솟아오름, 예고 표시)
 
-/** 오늘 기운이 강한 오행이 2배 자주 나온다 */
-export function pickElement(rng, todayElement) {
-  const r = Math.floor(rng() * 6);
-  return r === 5 ? todayElement : r;
+export const MOTION_BY_ELEMENT = ['SPROUT', 'ROLL', 'HEAVY', 'ZIGZAG', 'POP'];
+
+/** 피할 운명의 오행: 천적 3배, 오늘 기운 2배, 내 색깔 제외 */
+export function pickFate(rng, { me, nemesis, today }) {
+  const pool = [];
+  for (let e = 0; e < 5; e++) {
+    if (e === me) continue;
+    let w = 1;
+    if (e === nemesis) w += 2;
+    if (e === today) w += 1;
+    for (let i = 0; i < w; i++) pool.push(e);
+  }
+  return pool[Math.floor(rng() * pool.length)];
 }
 
-// counter 모양이 이기는 장애물 (rules.counterOf 의 역함수)
-const elementBeatenBy = (counter) => (counter + 2) % 5;
+const drop = (ctx, at, x, element) => ({
+  at,
+  x,
+  kind: 'DROP',
+  element,
+  motion: MOTION_BY_ELEMENT[element],
+  speed: ctx.speed * (element === 2 ? 1.5 : 1),
+});
 
-const CHUNKS = {
-  // 벽 하나
-  single: (ctx) => [{ dx: 0, kind: 'WALL', element: pickElement(ctx.rng, ctx.today) }],
-  // 같은 벽 두 개: 한 번 맞추면 연속 격파
-  twin: (ctx) => {
-    const el = pickElement(ctx.rng, ctx.today);
-    return [{ dx: 0, kind: 'WALL', element: el }, { dx: ctx.wallGap * 0.8, kind: 'WALL', element: el }];
+const WAVES = {
+  // 여기저기 비
+  rain: (ctx) => {
+    const n = 3 + Math.floor(ctx.rng() * (2 + ctx.level * 4));
+    return Array.from({ length: n }, (_, i) =>
+      drop(ctx, i === 0 ? 0 : 260 - ctx.level * 120, 0.05 + ctx.rng() * 0.9, pickFate(ctx.rng, ctx)),
+    );
   },
-  // 체인: 한 번씩만 탭하면 다음 벽을 이기는 모양이 되도록 배치 → 탭 리듬
-  chain: (ctx) => {
-    const n = 2 + Math.floor(ctx.rng() * (1 + ctx.level * 2)); // 2~4개
-    let counter = Math.floor(ctx.rng() * 5);
+  // 한 줄로 쏟아지는데 한 칸만 비어 있다 → 빈칸으로!
+  wall: (ctx) => {
+    const cols = 7;
+    const gap = Math.floor(ctx.rng() * cols);
+    const el = pickFate(ctx.rng, ctx);
     const out = [];
-    for (let i = 0; i < n; i++) {
-      out.push({ dx: i === 0 ? 0 : ctx.wallGap, kind: 'WALL', element: elementBeatenBy(counter) });
-      counter = (counter + 1) % 5;
+    for (let c = 0; c < cols; c++) {
+      if (c === gap) continue;
+      out.push({ ...drop(ctx, 0, (c + 0.5) / cols, el), motion: 'FALL' });
     }
     return out;
   },
-  // 허들: 점프로 넘는 작은 장애물 + 위에 코인
-  hurdles: (ctx) => {
-    const n = 2 + Math.floor(ctx.rng() * 2);
+  // 나를 노리는 저격 (예고 후 떨어짐)
+  sniper: (ctx) => {
+    const n = 1 + Math.floor(ctx.level * 3);
+    return Array.from({ length: n }, (_, i) => ({ ...drop(ctx, i === 0 ? 0 : 520, 'PLAYER', ctx.nemesis), motion: 'HEAVY', speed: ctx.speed * 1.6 }));
+  },
+  // 친구 소나기: 내 색깔 + 코인 (보상 구간)
+  friends: (ctx) => {
     const out = [];
-    for (let i = 0; i < n; i++) {
-      out.push({ dx: i === 0 ? 0 : 300, kind: 'SMALL', element: pickElement(ctx.rng, ctx.today) });
-      out.push({ dx: 0, kind: 'COIN', high: true });
+    for (let i = 0; i < 5; i++) {
+      const x = 0.1 + ctx.rng() * 0.8;
+      out.push({ ...drop(ctx, i === 0 ? 0 : 220, x, ctx.me), motion: 'FALL' });
+      out.push({ at: 110, x: Math.min(0.95, x + 0.08), kind: 'COIN', speed: ctx.speed });
     }
     return out;
   },
-  // 벽 뒤에 바로 허들
-  mixed: (ctx) => [
-    { dx: 0, kind: 'WALL', element: pickElement(ctx.rng, ctx.today) },
-    { dx: ctx.wallGap, kind: 'SMALL', element: pickElement(ctx.rng, ctx.today) },
-  ],
-  // 쉬어가기: 코인 줄
-  coins: () => Array.from({ length: 6 }, (_, i) => ({ dx: i === 0 ? 0 : 45, kind: 'COIN' })),
+  // 친구 사이에 운명이 섞인 혼합
+  mixed: (ctx) =>
+    Array.from({ length: 6 }, (_, i) => {
+      const friend = ctx.rng() < 0.4;
+      return drop(ctx, i === 0 ? 0 : 240 - ctx.level * 80, 0.05 + ctx.rng() * 0.9, friend ? ctx.me : pickFate(ctx.rng, ctx));
+    }),
 };
 
-// 레벨(0~1)별 덩어리 가중치
-function chunkWeights(level) {
+function waveWeights(level) {
   return [
-    ['single', 3 - level * 2],
-    ['twin', 2],
-    ['chain', 1 + level * 3],
-    ['hurdles', 2],
-    ['mixed', level * 2],
-    ['coins', 1.5 - level],
+    ['rain', 3],
+    ['mixed', 3],
+    ['friends', 1.5 - level * 0.5],
+    ['wall', 0.5 + level * 2],
+    ['sniper', level * 2],
   ];
 }
 
@@ -76,21 +96,21 @@ function weightedPick(rng, weights) {
 }
 
 /**
- * 다음 덩어리를 만든다.
- * @param {{rng:()=>number, distanceM:number, today:number, lucky:number, fake:number,
- *          sinceLuckyM:number, hearts:number}} ctx
+ * 다음 웨이브.
+ * @param {{rng:()=>number, timeMs:number, me:number, nemesis:number, today:number,
+ *          lucky:number, fake:number, sinceLuckyMs:number, hearts:number}} ctx
  */
-export function nextChunk(ctx) {
-  const level = Math.min(1, ctx.distanceM / 2500);
-  const full = { ...ctx, level, wallGap: 420 - level * 110 };
-  const items = CHUNKS[weightedPick(ctx.rng, chunkWeights(level))](full);
+export function nextWave(ctx) {
+  const level = Math.min(1, ctx.timeMs / 90000); // 1분 30초에 최고 난이도
+  const full = { ...ctx, level, speed: 260 + level * 260 };
+  const name = ctx.timeMs < 4000 ? 'friends' : weightedPick(ctx.rng, waveWeights(level));
+  const items = WAVES[name](full);
 
-  // 덩어리 사이 여백(앞에): 최대 4번 탭할 시간은 확보
-  items[0] = { ...items[0], dx: 640 - level * 160 + ctx.rng() * 120 };
+  // 웨이브 사이 숨 돌릴 틈
+  items[0] = { ...items[0], at: 900 - level * 450 };
 
-  // 럭키템: 약 400m 마다 보장. 짝퉁은 가끔 섞는다.
-  if (ctx.sinceLuckyM > 400) items.push({ dx: 160, kind: 'LUCKY', element: ctx.lucky });
-  else if (ctx.rng() < 0.06) items.push({ dx: 160, kind: 'FAKE', element: ctx.fake });
-  else if (ctx.hearts < 3 && ctx.rng() < 0.05) items.push({ dx: 160, kind: 'HEART' });
-  return items;
+  if (ctx.sinceLuckyMs > 20000) items.push({ at: 300, x: 0.2 + ctx.rng() * 0.6, kind: 'LUCKY', element: ctx.lucky, speed: 200 });
+  else if (ctx.rng() < 0.08) items.push({ at: 300, x: 0.2 + ctx.rng() * 0.6, kind: 'FAKE', element: ctx.fake, speed: 200 });
+  else if (ctx.hearts < 3 && ctx.rng() < 0.08) items.push({ at: 300, x: 0.2 + ctx.rng() * 0.6, kind: 'HEART', speed: 200 });
+  return { name, items };
 }

@@ -1,9 +1,8 @@
-// 화면 흐름: 생일 입력 → 캐릭터 공개(상성·스킬·운세·하는 법) → 달리기 → 결과 카드.
+// 화면 흐름: 생일 입력 → 캐릭터 공개(천적·스킬·운세·하는 법) → 피하기 → 결과 카드.
 
-import { FORMS } from './content.js';
+import { FORMS, josa } from './content.js';
 import { createProfile } from './profile.js';
-import { beats } from './rules.js';
-import { drawPlayer, drawClover } from './art.js';
+import { drawPlayer, drawClover, drawDrop } from './art.js';
 import { unlockAudio } from './sfx.js';
 import { RunScene, gameSizeFor } from './RunScene.js';
 import { buildResult, drawResultCard, hitTest, saveCard, shareCard } from './resultCard.js';
@@ -58,10 +57,11 @@ function showReveal(p) {
   $('#char-tagline').textContent = p.character.tagline;
   $('#char-summary').textContent = `“${p.summary}”`;
 
-  paint($('#foe-canvas'), (ctx) => drawPlayer(ctx, p.nemesis));
-  $('#foe-name').textContent = FORMS[p.nemesis].name;
-  paint($('#friend-canvas'), (ctx) => drawPlayer(ctx, p.helper));
-  $('#friend-name').textContent = FORMS[p.helper].name;
+  paint($('#foe-canvas'), (ctx) => drawDrop(ctx, p.nemesis, false));
+  $('#foe-name').textContent = FORMS[p.nemesis].obstacle;
+  paint($('#friend-canvas'), (ctx) => drawDrop(ctx, p.me, true));
+  $('#friend-name').textContent = FORMS[p.me].obstacle;
+  $('#how-friend').textContent = `내 색깔(${FORMS[p.me].emoji}${FORMS[p.me].name})은`;
   paint($('#luck-canvas'), (ctx) => drawClover(ctx, p.lucky));
   $('#luck-name').textContent = FORMS[p.lucky].name;
 
@@ -74,11 +74,10 @@ function showReveal(p) {
   $('#fortune-headline').textContent = p.fortune.headline;
   $('#fortune-desc').textContent = `오늘의 효과: ${p.fortune.desc}`;
 
-  // 가위바위보 표: 각 모양이 이기는 상대
-  $('#rps').innerHTML = FORMS.map((f, i) => {
-    const target = [0, 1, 2, 3, 4].find((t) => beats(i, t));
-    return `<span>${f.emoji}${f.name} > ${FORMS[target].emoji}${FORMS[target].name}</span>`;
-  }).join('');
+  // 떨어지는 운명마다 움직임이 다르다
+  $('#moves').innerHTML = FORMS.filter((_, i) => i !== p.me)
+    .map((f) => `<span>${f.emoji}${josa(f.obstacle, '은', '는')} ${f.move}</span>`)
+    .join('');
 
   $('#intro').hidden = true;
   $('#reveal').hidden = false;
