@@ -12,8 +12,12 @@ import {
   tickRun,
   statusEffects,
   isFever,
+  resolveJustDodge,
+  isJustTiming,
+  resolveGhostPass,
 } from '../combat.js';
-import { FEVER, STATUS_BY_ATTACKER } from '../tables.js';
+import { FEVER, STATUS_BY_ATTACKER, SCENE_FX, JUST_DODGE, GHOST } from '../tables.js';
+import { STAGES, STAGE_TEX_SIZE } from './stages.js';
 
 const W = 960;
 const H = 540;
@@ -29,10 +33,24 @@ export class RunScene extends Phaser.Scene {
     super('RunScene');
   }
 
-  /** @param {{char: ReturnType<import('../buildPlayer.js').createCharacter>, onGameOver: Function}} data */
+  /**
+   * @param {{char: ReturnType<import('../buildPlayer.js').createCharacter>, onGameOver: Function,
+   *          ghost?: {date:string, distance:number} | null}} data
+   */
   init(data) {
     this.char = data.char;
     this.onGameOver = data.onGameOver;
+    this.ghostRecord = data.ghost ?? null;
+    this.slowmoLeft = 0; //      저스트 회피 슬로모 남은 실시간 ms
+    this.lastActionAt = 0; //    마지막 점프/슬라이딩 시작 시각 (저스트 회피 판정)
+    this.landLockUntil = 0; //   착지 경직
+    this.bufferedJump = false;
+    this.wasGrounded = true;
+    this.stageIdx = 0;
+    this.nextStageAt = SCENE_FX.stageShuffleMs;
+    this.fxActive = { heat: false, wave: false };
+    this.ghost = null;
+    this.ghostDone = false;
     this.run = createRunState(this.char);
     this.elapsed = 0; // 판 시작 후 ms — combat.js 의 now
     this.nextObstacleAt = 1500;
@@ -44,13 +62,20 @@ export class RunScene extends Phaser.Scene {
   create() {
     this.makeTextures();
     this.physics.world.gravity.y = 2200;
+    this.endSlowmo(); // 재시작 시 이전 판 슬로모 잔여 제거
 
-    this.add.rectangle(W / 2, (GROUND_Y + H) / 2, W, H - GROUND_Y, 0x2a2146);
+    // 배경: 스카이라인 tileSprite (패럴랙스) + 땅
+    this.skyline = this.add.tileSprite(W / 2, GROUND_Y - STAGE_TEX_SIZE.height / 2, W, STAGE_TEX_SIZE.height, 'stage-0').setDepth(-10);
+    this.groundRect = this.add.rectangle(W / 2, (GROUND_Y + H) / 2 + 40, W * 1.4, H - GROUND_Y + 80, 0x2a2146).setDepth(-5);
+    this.stageLabel = this.add.text(W - 16, 12, '', { fontSize: '18px', color: '#b9aed6' }).setOrigin(1, 0).setDepth(60);
+    this.setStage(0);
     this.ground = this.add.rectangle(W / 2, GROUND_Y + 10, W, 20, 0x000000, 0);
     this.physics.add.existing(this.ground, true);
 
-    this.player = this.physics.add.sprite(180, GROUND_Y - 40, `player-${this.char.elements.me}`);
-    this.player.body.setSize(48, 80);
+    // 발 기준(origin 0.5,1)으로 두어 슬라이딩 scaleY 변화가 땅을 파고들지 않게 한다.
+    // 바디 bottom = y - 88s + 8s + 80s = y → 스케일과 무관하게 발바닥 = 바디 바닥
+    this.player = this.physics.add.sprite(180, GROUND_Y, `player-${this.char.elements.me}`).setOrigin(0.5, 1);
+    this.player.body.setSize(48, 80, false).setOffset(8, 8);
     this.physics.add.collider(this.player, this.ground, () => (this.jumpsLeft = this.char.stats.maxJumps));
 
     this.obstacles = this.physics.add.group({ allowGravity: false, immovable: true });
@@ -58,7 +83,11 @@ export class RunScene extends Phaser.Scene {
     this.physics.add.overlap(this.player, this.obstacles, (_, o) => this.onHitObstacle(o));
     this.physics.add.overlap(this.player, this.items, (_, it) => this.onPickItem(it));
 
-    this.blindOverlay = this.add.rectangle(W / 2, H / 2, W, H, 0x5b3a1a, 0).setDepth(50);
+    this.createGhost();
+
+    // 화면 오버레이는 카메라 흔들림/회전에도 가장자리가 보이지 않게 크게 깐다
+    this.tintOverlay = this.add.rectangle(W / 2, H / 2, W * 1.4, H * 1.4, 0x000000, 0).setDepth(49);
+    this.blindOverlay = this.add.rectangle(W / 2, H / 2, W * 1.4, H * 1.4, 0x5b3a1a, 0).setDepth(50);
     this.hud = this.add.text(16, 12, '', { fontSize: '20px', color: '#f6f1e7' }).setDepth(60);
     this.banner = this.add.text(W / 2, 90, '', { fontSize: '32px', color: '#f2c14e', fontStyle: 'bold' }).setOrigin(0.5).setDepth(60);
 
@@ -89,6 +118,13 @@ export class RunScene extends Phaser.Scene {
 
   jump() {
     if (statusEffects(this.run).noJump || this.jumpsLeft <= 0) return;
+    // 착지 경직 중이면 입력을 버리지 않고 경직이 끝나는 순간 실행 (無土: +50ms)
+    if (this.elapsed < this.landLockUntil) {
+      this.bufferedJump = true;
+      return;
+    }
+    this.bufferedJump = false;
+    this.lastActionAt = this.elapsed;
     this.jumpsLeft--;
     this.setSliding(false);
     this.player.setVelocityY(-820 * this.char.stats.jump);
@@ -97,6 +133,7 @@ export class RunScene extends Phaser.Scene {
   setSliding(on) {
     if (this.sliding === on) return;
     this.sliding = on;
+    if (on) this.lastActionAt = this.elapsed;
     // Arcade 바디는 스케일을 따라가므로 scaleY 만 줄이면 판정도 같이 납작해진다.
     // 水 일간 "물 흐르듯"은 더 납작하게 (슬라이딩 길이 ×1.5 의 단순 구현)
     const flat = this.char.character.passive.id === 'FLOW' ? 0.375 : 0.5;
@@ -104,10 +141,17 @@ export class RunScene extends Phaser.Scene {
   }
 
   // ── 메인 루프 ─────────────────────────────────────────────────
-  update(_, dt) {
+  update(_, realDt) {
     if (this.run.dead) return;
+    const dt = this.applySlowmo(realDt);
     this.elapsed += dt;
     const now = this.elapsed;
+    this.updateLanding(now);
+    // 안전망: 어떤 이유로든 땅을 뚫고 내려가면 지면 위로 복귀
+    if (this.player.body.bottom > GROUND_Y + 12) {
+      this.player.body.reset(this.player.x, GROUND_Y);
+      this.jumpsLeft = this.char.stats.maxJumps;
+    }
 
     for (const ev of tickRun(this.run, this.char, now, dt)) this.fx(ev);
     if (this.run.dead) return this.finish();
@@ -120,7 +164,12 @@ export class RunScene extends Phaser.Scene {
 
     this.scrollGroup(this.obstacles, speed, dt, (o) => onObstaclePassed(this.run, this.char, o.getData('model')));
     this.scrollGroup(this.items, speed, dt);
+    this.skyline.tilePositionX += (speed * dt) / 1000 * 0.25;
     this.applyMagnet(dt);
+    this.checkJustDodges();
+    this.updateGhost();
+    this.updateStageShuffle(now);
+    this.updateScreenFx(now);
 
     if (now >= this.nextObstacleAt) this.spawnObstacle(now);
     if (now >= this.nextItemAt) this.spawnItem(now);
@@ -152,12 +201,169 @@ export class RunScene extends Phaser.Scene {
     }
   }
 
+  // ── 착지 경직 (無土) ──────────────────────────────────────────
+  updateLanding(now) {
+    const grounded = this.player.body.blocked.down || this.player.body.touching.down;
+    if (grounded && !this.wasGrounded) {
+      this.landLockUntil = now + SCENE_FX.landingLagMs + (this.char.mods.landingLagBonus ?? 0);
+    }
+    this.wasGrounded = grounded;
+    if (this.bufferedJump && now >= this.landLockUntil) this.jump();
+  }
+
+  // ── 저스트 회피 + 슬로모 (金 일간) ─────────────────────────────
+  // 장애물이 플레이어 x 구간에 들어오는 순간, 마지막 회피 동작이 0.15초 이내였고
+  // 지나가는 동안 한 번도 닿지 않았으면 저스트 회피.
+  checkJustDodges() {
+    const pb = this.player.body;
+    for (const o of this.obstacles.getChildren()) {
+      const m = o.getData('model');
+      if (m.judged || m.hit || m.swooned) continue;
+      const ob = o.getBounds();
+      if (ob.right < pb.left) {
+        m.judged = true;
+        if (m.near && !m.touched) {
+          const ev = resolveJustDodge(this.run, this.char);
+          this.fx(ev);
+          if (ev.slowmo) this.startSlowmo();
+        }
+        continue;
+      }
+      if (ob.left > pb.right) continue; // 아직 옆에 오지 않음
+      if (m.near === undefined) m.near = isJustTiming(this.char, this.lastActionAt, this.elapsed);
+      if (Math.max(ob.top - pb.bottom, pb.top - ob.bottom) <= 0) m.touched = true;
+    }
+  }
+
+  startSlowmo() {
+    this.slowmoLeft = JUST_DODGE.slowmoMs;
+    this.physics.world.timeScale = 1 / JUST_DODGE.slowmoScale; // Arcade: 값이 클수록 느림
+    this.tweens.timeScale = JUST_DODGE.slowmoScale;
+    this.cameras.main.flash(120, 230, 237, 243);
+  }
+
+  endSlowmo() {
+    this.slowmoLeft = 0;
+    this.physics.world.timeScale = 1;
+    this.tweens.timeScale = 1;
+  }
+
+  /** 슬로모 중엔 게임 시간 dt 를 줄여 돌려준다 (슬로모 길이는 실시간 기준) */
+  applySlowmo(realDt) {
+    if (this.slowmoLeft <= 0) return realDt;
+    this.slowmoLeft -= realDt;
+    if (this.slowmoLeft <= 0) this.endSlowmo();
+    return realDt * JUST_DODGE.slowmoScale;
+  }
+
+  // ── 라이벌 고스트 (비겁일) ──────────────────────────────────────
+  createGhost() {
+    if (!this.char.mods.ghostRival) return;
+    this.ghost = this.ghostRecord
+      ? { distance: this.ghostRecord.distance, label: `어제의 나 (${this.ghostRecord.date})` }
+      : { distance: GHOST.fallbackM, label: '과거의 나 (추정)' };
+    this.ghostSprite = this.add
+      .image(W + 100, GROUND_Y - 44, `player-${this.char.elements.me}`)
+      .setAlpha(0.35)
+      .setTint(0x9fb7ff)
+      .setDepth(5);
+    this.ghostTag = this.add.text(0, 0, this.ghost.label, { fontSize: '14px', color: '#9fb7ff' }).setOrigin(0.5).setDepth(5);
+  }
+
+  updateGhost() {
+    if (!this.ghost || this.ghostDone) return;
+    const remainM = this.ghost.distance - this.run.distance;
+    if (remainM <= 0) {
+      this.ghostDone = true;
+      const ev = resolveGhostPass(this.run, this.char);
+      if (ev) this.fx(ev);
+      // 고스트가 넘어지며 뒤로 흘러간다
+      this.tweens.add({ targets: [this.ghostSprite, this.ghostTag], x: -100, angle: -90, alpha: 0, duration: 1200 });
+      return;
+    }
+    // 15m 이내로 따라잡으면 화면 오른쪽에서 보이기 시작
+    const x = remainM <= GHOST.showWithinM ? this.player.x + remainM * PX_PER_METER : W + 100;
+    const bob = Math.sin(this.elapsed / 90) * 3;
+    this.ghostSprite.setPosition(x, GROUND_Y - 44 + bob);
+    this.ghostTag.setPosition(x, GROUND_Y - 104 + bob);
+  }
+
+  // ── 역마살: 배경 국가 랜덤 출장 ─────────────────────────────────
+  setStage(idx) {
+    this.stageIdx = idx;
+    const stage = STAGES[idx];
+    this.skyline.setTexture(`stage-${idx}`);
+    this.groundRect.setFillStyle(stage.ground);
+    this.cameras.main.setBackgroundColor(stage.sky);
+    this.stageLabel.setText(`📍 ${stage.name}`);
+  }
+
+  updateStageShuffle(now) {
+    if (!this.char.mods.stageShuffle || now < this.nextStageAt) return;
+    this.nextStageAt = now + SCENE_FX.stageShuffleMs;
+    let idx = Phaser.Math.Between(0, STAGES.length - 2);
+    if (idx >= this.stageIdx) idx++; // 같은 나라 연속 방지
+    this.cameras.main.flash(250, 255, 255, 255);
+    this.setStage(idx);
+    this.fx({ type: 'STAGE', name: STAGES[idx].name });
+  }
+
+  // ── 火 과다 아지랑이 / 水 과다 물결 ────────────────────────────
+  // 카메라 회전·줌 + 색 오버레이라 Canvas/WebGL 렌더러 모두에서 동작한다.
+  updateScreenFx(now) {
+    const { mods } = this.char;
+    const cam = this.cameras.main;
+    const inWindow = ({ everyMs, durationMs }) => now >= everyMs && now % everyMs < durationMs;
+    const heat = !!mods.heatHaze && inWindow(SCENE_FX.heatHaze);
+    const wave = !!mods.waveFx && inWindow(SCENE_FX.wave);
+
+    let rot = 0;
+    let zoom = 1;
+    let tint = 0;
+    let alpha = 0;
+    if (heat) {
+      const t = now / 45;
+      rot += 0.006 * Math.sin(t);
+      zoom += 0.015 + 0.01 * Math.sin(t * 1.7);
+      tint = 0xff6a00;
+      alpha = 0.14 + 0.06 * Math.sin(t * 2);
+    }
+    if (wave) {
+      const t = now / 220;
+      rot += 0.02 * Math.sin(t);
+      zoom += 0.03 + 0.01 * Math.sin(t * 2);
+      tint = 0x2f6fd6;
+      alpha = 0.18;
+    }
+    cam.setRotation(rot).setZoom(zoom);
+    this.tintOverlay.setFillStyle(tint, alpha);
+
+    if (heat && !this.fxActive.heat) this.fx({ type: 'HEAT' });
+    if (wave && !this.fxActive.wave) this.fx({ type: 'WAVE' });
+    this.fxActive = { heat, wave };
+  }
+
+  splash(o) {
+    this.tweens.add({ targets: o, alpha: 0.3, duration: 200 });
+    const p = this.add.particles(o.x, o.y + 20, 'drop', {
+      speed: { min: 120, max: 320 },
+      angle: { min: 200, max: 340 },
+      gravityY: 900,
+      lifespan: 600,
+      quantity: 18,
+      emitting: false,
+    });
+    p.explode(18);
+    this.time.delayedCall(800, () => p.destroy());
+  }
+
   // ── 스폰 ─────────────────────────────────────────────────────
   spawnObstacle(now) {
     const { mods, spawnWeights } = this.char;
     const element = pickWeighted(spawnWeights);
     const high = Math.random() < 0.35; // 머리 위 장애물 → 슬라이딩으로 회피
-    const y = high ? GROUND_Y - 115 : GROUND_Y - 30;
+    // 높은 장애물(60px)은 340~400: 서 있으면(380~460) 머리에 걸리고, 슬라이딩(420~460)하면 통과
+    const y = high ? GROUND_Y - 90 : GROUND_Y - 30;
     const o = this.obstacles.create(W + 60, y, `obs-${element}`);
     const model = { element, size: high ? 1 : 1.2, high, hit: false, name: OBSTACLE_NAMES[element] };
 
@@ -198,9 +404,13 @@ export class RunScene extends Phaser.Scene {
   onHitObstacle(o) {
     const model = o.getData('model');
     if (model.hit) return;
-    const ev = resolveCollision(this.run, this.char, model, this.elapsed);
-    if (ev.type === 'IGNORED') return;
+    const ev = resolveCollision(this.run, this.char, model, this.elapsed, Math.random, { sliding: this.sliding });
+    if (ev.type === 'IGNORED') {
+      model.touched = true; // 무적으로 통과한 건 저스트 회피가 아니다
+      return;
+    }
     model.hit = true;
+    if (ev.type === 'SPLASH') this.splash(o);
     if (ev.type === 'SMASH') {
       this.tweens.add({ targets: o, angle: 540, x: o.x + 300, y: -80, duration: 500, onComplete: () => o.destroy() });
     }
@@ -239,6 +449,12 @@ export class RunScene extends Phaser.Scene {
       case 'COMBO_BLAZE': say('불붙은 콤보!'); break;
       case 'GROWTH': say(`쑥쑥 성장 Lv.${ev.stacks}`, '#7be07b'); break;
       case 'SHIELD_REGEN': say('바위 피부 재생'); break;
+      case 'SPLASH': say('범람! 물보라 통과', '#6fa8ff'); break;
+      case 'JUST_DODGE': say(ev.slowmo ? `칼같은 회피! +${ev.score}` : `저스트! +${ev.score}`, '#e6edf3'); break;
+      case 'GHOST_PASSED': say(`어제의 나 추월! +${ev.score}`); break;
+      case 'STAGE': say(`✈ 긴급 출장: ${ev.name}!`, '#e6edf3'); break;
+      case 'HEAT': say('과열 경보! 🔥', '#ff8a3d'); break;
+      case 'WAVE': say('범람! 🌊', '#6fa8ff'); break;
     }
   }
 
@@ -246,12 +462,15 @@ export class RunScene extends Phaser.Scene {
     const r = this.run;
     const statuses = r.statuses.map((s) => s.name).join(' ');
     const fever = isFever(r, now) ? `FEVER ${Math.ceil((r.feverUntil - now) / 1000)}s` : `게이지 ${Math.floor(r.fever)}%`;
+    const ghost = this.ghost && !r.ghostPassed ? `  👻 ${Math.max(0, Math.ceil(this.ghost.distance - r.distance))}m` : '';
     this.hud.setText(
-      `HP ${Math.ceil(r.hp)}/${r.maxHp}${r.shield ? ' 🛡' : ''}  ${Math.floor(r.distance)}m  점수 ${Math.floor(r.score)}  ${fever}  ${statuses}`,
+      `HP ${Math.ceil(r.hp)}/${r.maxHp}${r.shield ? ' 🛡' : ''}  ${Math.floor(r.distance)}m  점수 ${Math.floor(r.score)}  ${fever}${ghost}  ${statuses}`,
     );
   }
 
   finish() {
+    this.endSlowmo();
+    this.cameras.main.setRotation(0).setZoom(1);
     this.physics.pause();
     this.time.delayedCall(600, () => this.onGameOver?.(this.run));
   }
@@ -303,6 +522,13 @@ export class RunScene extends Phaser.Scene {
         ctx.fill();
         glyph(ctx, hanja, 26, 27, 22);
       });
+    });
+    STAGES.forEach((stage, i) => canvasTex(`stage-${i}`, STAGE_TEX_SIZE.width, STAGE_TEX_SIZE.height, (ctx) => stage.draw(ctx)));
+    canvasTex('drop', 8, 8, (ctx) => {
+      ctx.fillStyle = '#9cc4ff';
+      ctx.beginPath();
+      ctx.arc(4, 4, 4, 0, Math.PI * 2);
+      ctx.fill();
     });
     canvasTex('coin', 24, 24, (ctx) => {
       ctx.fillStyle = '#f2c14e';

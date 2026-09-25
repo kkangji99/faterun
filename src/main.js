@@ -5,14 +5,27 @@ import { createCharacter } from './game/buildPlayer.js';
 import { buildResultData } from './game/result.js';
 import { drawResultCard, hitTest, shareResult, downloadBlob } from './game/resultCard.js';
 import { RunScene, RUN_SCENE_SIZE } from './game/scenes/RunScene.js';
+import { birthKey, loadGhost, saveRun } from './game/ghost.js';
 
 const $ = (sel) => document.querySelector(sel);
 const now = new Date();
 const today = { year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate() };
-const todayStr = `${today.year}.${String(today.month).padStart(2, '0')}.${String(today.day).padStart(2, '0')}`;
+const pad = (n) => String(n).padStart(2, '0');
+const todayStr = `${today.year}.${pad(today.month)}.${pad(today.day)}`;
+const todayIso = `${today.year}-${pad(today.month)}-${pad(today.day)}`;
+
+// localStorage 는 차단된 환경에서 접근만으로 throw 할 수 있다
+const storage = (() => {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+})();
 
 let char = null;
 let game = null;
+let recordKey = null;
 
 $('#birth-form').addEventListener('submit', (e) => {
   e.preventDefault();
@@ -20,7 +33,9 @@ $('#birth-form').addEventListener('submit', (e) => {
   const [year, month, day] = form.get('date').split('-').map(Number);
   const time = form.get('time');
   const [hour, minute] = time ? time.split(':').map(Number) : [null, 0];
-  char = createCharacter({ year, month, day, hour, minute }, today);
+  const birth = { year, month, day, hour, minute };
+  char = createCharacter(birth, today);
+  recordKey = birthKey(birth);
   showFortune(char);
 });
 
@@ -43,7 +58,7 @@ function startRun() {
   $('#fortune').hidden = true;
   $('#game').hidden = false;
   $('#result').style.display = 'none';
-  const data = { char, onGameOver: showResult };
+  const data = { char, onGameOver: showResult, ghost: loadGhost(storage, recordKey, todayIso) };
   if (game) return game.scene.start('RunScene', data);
   game = new Phaser.Game({
     type: Phaser.AUTO,
@@ -58,6 +73,7 @@ function startRun() {
 }
 
 function showResult(run) {
+  saveRun(storage, recordKey, todayIso, run.distance); // 다음 "라이벌 출몰의 날" 고스트용
   const data = buildResultData(char, run);
   const canvas = $('#result canvas');
   const buttons = drawResultCard(canvas.getContext('2d'), data, { dayMaster: char.profile.dayMaster, date: todayStr });

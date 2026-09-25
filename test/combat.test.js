@@ -83,3 +83,43 @@ test('출혈 DoT 로 사망하면 사인이 출혈', () => {
   assert.match(r.deathCause, /金 기운에 벌목/);
   assert.ok(ackttemRate(c, run) >= 0 && ackttemRate(c, run) <= 99);
 });
+
+test('점수 배율(역마·충)이 모든 점수 획득에 적용된다', async () => {
+  const { addScore } = await import('../src/game/combat.js');
+  const c = charWith(WOOD, { scoreMult: 1.8 });
+  const run = createRunState(c);
+  assert.equal(addScore(run, c, 100), 180);
+  resolveItem(run, c, { element: WOOD, special: 'COIN' }, 0);
+  assert.equal(run.score, 180 + 18);
+});
+
+test('水 과다: 슬라이딩 중 낮은 장애물 물보라 통과, 쿨다운 동안은 피격', () => {
+  const c = charWith(WATER, { slideIgnoresLow: true });
+  const run = createRunState(c);
+  run.hp = 1000; // 土克水 2배 피해로 중간에 죽지 않게
+  const low = { element: EARTH, high: false };
+  assert.equal(resolveCollision(run, c, low, 0, noRng, { sliding: true }).type, 'SPLASH');
+  assert.equal(resolveCollision(run, c, low, 1000, noRng, { sliding: true }).type, 'HIT');
+  assert.equal(resolveCollision(run, c, { element: EARTH, high: true }, 9000, noRng, { sliding: true }).type, 'HIT');
+  assert.equal(resolveCollision(run, c, low, 20000, noRng, { sliding: false }).type, 'HIT');
+});
+
+test('저스트 회피: 누구나 +100, 金 일간은 ×3 + 슬로모', async () => {
+  const { resolveJustDodge, isJustTiming } = await import('../src/game/combat.js');
+  const wood = charWith(WOOD);
+  assert.deepEqual(resolveJustDodge(createRunState(wood), wood), { type: 'JUST_DODGE', score: 100, slowmo: false });
+  const metal = charWith(METAL);
+  metal.character.passive = { id: 'JUST_DODGE' };
+  assert.deepEqual(resolveJustDodge(createRunState(metal), metal), { type: 'JUST_DODGE', score: 300, slowmo: true });
+  const wood2 = charWith(WOOD);
+  assert.ok(isJustTiming(wood2, 1000, 1150) && !isJustTiming(wood2, 1000, 1151) && !isJustTiming(wood2, 0, 100));
+  assert.ok(!isJustTiming(charWith(WOOD, { justDodgeWindowMult: 0.7 }), 1000, 1150)); // 無金: 105ms
+});
+
+test('라이벌 고스트 추월 보너스는 한 판에 1회', async () => {
+  const { resolveGhostPass } = await import('../src/game/combat.js');
+  const c = charWith(FIRE);
+  const run = createRunState(c);
+  assert.equal(resolveGhostPass(run, c).score, 2000);
+  assert.equal(resolveGhostPass(run, c), null);
+});

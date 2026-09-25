@@ -31,7 +31,7 @@ export const DAY_MASTER_CHARACTERS = {
     name: '칼각 로봇 "쇠돌이"',
     visual: '크롬 바디 + 한쪽 눈 레이저 조준경',
     stats: { hp: 90, speed: 1.05, jump: 1.0 },
-    passive: { id: 'JUST_DODGE', name: '칼같은 회피', desc: '장애물을 0.15초 이내 아슬아슬하게 피하면 슬로모 + 점수 ×3' },
+    passive: { id: 'JUST_DODGE', name: '칼같은 회피', desc: '장애물이 닿기 0.15초 이내에 점프/슬라이딩으로 피하면(저스트 회피) 슬로모 + 저스트 점수 ×3' },
   },
   [WATER]: {
     name: '물방울 슬라임 "말랑이"',
@@ -72,7 +72,7 @@ export const EXCESS_EFFECTS = {
   [FIRE]: { name: '火 과다 — 과열 경보', desc: '속도 +10%, 피버 지속 +2초. 단 20초마다 1초간 화면 아지랑이', mods: { speedMult: 1.1, feverDurationBonus: 2000, heatHaze: true } },
   [EARTH]: { name: '土 과다 — 고집불통', desc: '넉백·속도저하 상태이상 면역, 점프력 -10%', mods: { jumpMult: 0.9, slowImmune: true } },
   [METAL]: { name: '金 과다 — 금속탐지기', desc: '코인 가치 +20%, 金 장애물 피해 -30%(동족 할인)', mods: { coinMult: 1.2, sameElementDamageMult: 0.7 } },
-  [WATER]: { name: '水 과다 — 범람', desc: '슬라이딩 중 낮은 장애물 무시, 가끔 화면이 물결처럼 일렁임', mods: { slideIgnoresLow: true, waveFx: true } },
+  [WATER]: { name: '水 과다 — 범람', desc: '슬라이딩 중 낮은 장애물을 물보라로 통과(4초 쿨), 25초마다 2초간 화면이 물결처럼 일렁임', mods: { slideIgnoresLow: true, waveFx: true } },
 };
 
 export const MISSING_EFFECTS = {
@@ -128,3 +128,19 @@ export const FEVER = {
   yongsinGuaranteeMs: 45000, // 45초간 용신 아이템이 안 나오면 강제 출현
   yongsinBaseChance: 0.02,
 };
+
+// ── 씬 연출/기믹 ───────────────────────────────────────────────
+export const SCENE_FX = {
+  stageShuffleMs: 30000, // 역마살: 배경 국가 전환 주기
+  heatHaze: { everyMs: 20000, durationMs: 1000 }, // 火 과다
+  wave: { everyMs: 25000, durationMs: 2000 }, //     水 과다
+  floodSplashCooldownMs: 4000, //                    水 과다: 슬라이딩 물보라 통과 쿨다운
+  landingLagMs: 0, //                                기본 착지 경직 (無土 +50ms)
+};
+
+// 저스트 회피: 장애물이 플레이어에 닿기 windowMs 이내에 회피 동작을 시작하고 무사히 통과.
+// 누구나 +100, 金 일간(칼같은 회피)은 ×3 + 슬로모
+export const JUST_DODGE = { windowMs: 150, baseScore: 100, metalMult: 3, slowmoMs: 600, slowmoScale: 0.35 };
+
+// 라이벌 고스트(비겁일): 가장 최근 "이전 날짜" 기록을 추월하면 보너스
+export const GHOST = { bonus: 2000, showWithinM: 15, fallbackM: 300 };

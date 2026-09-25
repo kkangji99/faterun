@@ -13,6 +13,9 @@ import {
   ITEM_RULES,
   MISSING_ITEM_BONUS,
   FEVER,
+  SCENE_FX,
+  JUST_DODGE,
+  GHOST,
 } from './tables.js';
 
 /** 한 판의 가변 상태 */
@@ -33,10 +36,12 @@ export function createRunState(char) {
     maxCombo: 0,
     distance: 0,
     lastHit: null, // { element, rel, status }
+    floodReadyAt: 0, // 水 과다 물보라 쿨다운
+    ghostPassed: false,
     lastYongsinAt: 0,
     growthStacks: 0,
     nextShieldAt: 0,
-    log: { nemesisHit: 0, nemesisDodged: 0, hitsByElement: [0, 0, 0, 0, 0], yongsinBusters: 0, smashed: 0 },
+    log: { nemesisHit: 0, nemesisDodged: 0, hitsByElement: [0, 0, 0, 0, 0], yongsinBusters: 0, smashed: 0, justDodges: 0, splashes: 0 },
     dead: false,
   };
 }
@@ -55,41 +60,54 @@ export function calcDamage(char, obstacle) {
 
 export const isFever = (run, now) => now < run.feverUntil;
 
+/** 점수 획득은 전부 여기로: 역마살·충 등의 점수 배율(scoreMult)을 적용한다 */
+export function addScore(run, char, points) {
+  const gained = Math.round(points * (char.mods.scoreMult ?? 1));
+  run.score += gained;
+  return gained;
+}
+
 /**
  * 상생상극 충돌 판정.
+ * pose.sliding: 플레이어가 슬라이딩 중인지 (水 과다 물보라 판정용)
  * @returns {{type:'IGNORED'|'SMASH'|'BLOCK'|'HIT'|'REVIVE'|'DEAD', rel?:string, damage?:number, status?:object, score?:number, reason?:string}}
  */
-export function resolveCollision(run, char, obstacle, now, rng = Math.random) {
+export function resolveCollision(run, char, obstacle, now, rng = Math.random, pose = {}) {
   if (run.dead || obstacle.swooned) return { type: 'IGNORED' };
   if (now < run.invincibleUntil && !isFever(run, now)) return { type: 'IGNORED' };
 
   const rel = relation(char.elements.me, obstacle.element);
   const smash = (score, reason) => {
-    run.score += score;
     run.log.smashed++;
-    return { type: 'SMASH', rel, score, reason };
+    return { type: 'SMASH', rel, score: addScore(run, char, score), reason };
   };
 
   // 1) 피버/용신버스터 중엔 전부 박살
   if (isFever(run, now)) {
     return smash(run.feverKind === 'YONGSIN' ? FEVER.yongsinScorePerObstacle : 150, 'FEVER');
   }
-  // 2) 백호살: 확률 들이받기
+  // 2) 水 과다 "범람": 슬라이딩 중 낮은 장애물을 물보라로 통과 (쿨다운)
+  if (pose.sliding && char.mods.slideIgnoresLow && !obstacle.high && now >= run.floodReadyAt) {
+    run.floodReadyAt = now + SCENE_FX.floodSplashCooldownMs;
+    run.log.splashes++;
+    return { type: 'SPLASH', rel };
+  }
+  // 3) 백호살: 확률 들이받기
   if (char.profile.shinsal.includes(SHINSAL.BAEKHO) && rng() < (char.mods.smashChance ?? 0)) {
     return smash(500, 'BAEKHO');
   }
-  // 3) 재성(내가 극하는 오행): 확률 파괴
+  // 4) 재성(내가 극하는 오행): 확률 파괴
   if (rel === REL.I_CONTROL && rng() < I_CONTROL_BREAK_CHANCE) {
     return smash(200, 'I_CONTROL');
   }
-  // 4) 보호막
+  // 5) 보호막
   if (run.shield > 0) {
     run.shield--;
     run.invincibleUntil = now + char.stats.iframe;
     return { type: 'BLOCK', rel };
   }
 
-  // 5) 피해 + 상극 상태이상
+  // 6) 피해 + 상극 상태이상
   const { damage } = calcDamage(char, obstacle);
   let status = null;
   if (rel === REL.CONTROLS_ME) {
@@ -145,7 +163,7 @@ export function resolveItem(run, char, item, now) {
     run.maxCombo = Math.max(run.maxCombo, run.combo);
     const value = Math.round(10 * (char.mods.coinMult ?? 1));
     run.coins += value;
-    run.score += value;
+    addScore(run, char, value);
     return { type: 'COIN', value };
   }
   if (item.special === 'LOVE_LETTER') return { type: 'LOVE_LETTER', value: 0 };
@@ -166,7 +184,7 @@ export function resolveItem(run, char, item, now) {
   const rule = rel === REL.GENERATES_ME ? ITEM_RULES.MOTHER : rel === REL.SAME ? ITEM_RULES.SAME : ITEM_RULES.OTHER;
   const heal = (rule.heal ?? 0) * bonus;
   if (heal) run.hp = Math.min(run.maxHp, run.hp + heal);
-  run.score += (rule.score ?? 0) * bonus;
+  if (rule.score) addScore(run, char, rule.score * bonus);
   const spark = addFever(run, char, rule.fever * bonus, now);
   return { type: rel === REL.GENERATES_ME ? 'MOTHER_BUFF' : 'ELEMENT', rel, heal, bonus, spark };
 }
@@ -190,6 +208,33 @@ export function triggerFever(run, char, now, kind) {
   run.feverUntil = now + duration;
   run.invincibleUntil = Math.max(run.invincibleUntil, now + duration);
   run.statuses = [];
+}
+
+/**
+ * 저스트 회피: 장애물이 닿기 직전(windowMs 이내)에 점프/슬라이딩을 시작해 무사히 통과했을 때.
+ * 누구나 +100, 金 일간(칼같은 회피)은 ×3 + 슬로모.
+ */
+export function resolveJustDodge(run, char) {
+  const metal = char.character.passive.id === 'JUST_DODGE';
+  run.log.justDodges++;
+  run.combo++;
+  run.maxCombo = Math.max(run.maxCombo, run.combo);
+  const score = addScore(run, char, JUST_DODGE.baseScore * (metal ? JUST_DODGE.metalMult : 1));
+  return { type: 'JUST_DODGE', score, slowmo: metal };
+}
+
+/** 저스트 회피 판정 시간창(ms): 無金이면 좁아진다 */
+export const justDodgeWindow = (char) => JUST_DODGE.windowMs * (char.mods.justDodgeWindowMult ?? 1);
+
+/** 장애물이 플레이어에 닿기 시작한 시각 기준으로, 마지막 회피 동작이 시간창 안이었나 */
+export const isJustTiming = (char, lastActionAt, contactAt) =>
+  lastActionAt > 0 && contactAt - lastActionAt >= 0 && contactAt - lastActionAt <= justDodgeWindow(char);
+
+/** 라이벌 고스트(어제의 나) 추월 — 한 판에 1회 */
+export function resolveGhostPass(run, char) {
+  if (run.ghostPassed) return null;
+  run.ghostPassed = true;
+  return { type: 'GHOST_PASSED', score: addScore(run, char, GHOST.bonus) };
 }
 
 /** 매 프레임 호출: 상태이상 DoT/만료, 일간 패시브 */
