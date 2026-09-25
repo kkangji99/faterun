@@ -2,47 +2,113 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-  <title>운명 피하기: 내 사주대로 달린다</title>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@500;700;900&family=Noto+Serif+KR:wght@900&display=swap" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>운명 피하기</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jua&family=Noto+Sans+KR:wght@400;700&display=swap" />
   <style>
-    :root { --bg: #1b1530; --panel: #2a2146; --ink: #f6f1e7; --sub: #b9aed6; --gold: #f2c14e; }
+    :root {
+      color-scheme: light;
+      --bg: #fff4e0; --card: #fffaf0; --ink: #221a2e; --sub: #7a6e8a;
+      --red: #e8453c; --green: #2f8a45; --purple: #6b4bd6; --line: #221a2e;
+      --display: "Jua", "Noto Sans KR", sans-serif;
+    }
     * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--ink); font-family: "Noto Sans KR", sans-serif; display: grid; place-items: center; }
-    .panel { width: min(440px, calc(100vw - 32px)); background: var(--panel); border-radius: 20px; padding: 24px; }
-    h1 { margin: 0 0 4px; color: var(--gold); font-family: "Noto Serif KR", serif; }
-    label { display: block; margin: 12px 0 4px; color: var(--sub); font-size: 14px; }
-    input, button { width: 100%; padding: 12px; border-radius: 12px; border: 0; font: inherit; }
-    button { margin-top: 16px; background: var(--gold); color: var(--bg); font-weight: 900; cursor: pointer; }
-    ul { padding-left: 18px; line-height: 1.6; }
-    #game { width: 100vw; max-width: 960px; }
-    #result { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; place-items: center; }
-    #result canvas { height: min(100vh, 177.7vw); aspect-ratio: 9 / 16; }
+    html, body { height: 100%; }
+    body {
+      margin: 0; background: var(--bg); color: var(--ink);
+      font: 16px/1.5 "Noto Sans KR", sans-serif;
+      display: grid; place-items: center; padding-inline: 16px;
+    }
+    .screen { width: min(460px, 100%); padding-block: 24px; display: grid; gap: 16px; }
+    h1 { margin: 0; font: 56px/1 var(--display); color: var(--red); text-align: center; }
+    .tag { margin: 0; text-align: center; color: var(--sub); font-family: var(--display); font-size: 20px; }
+    .card { background: var(--card); border: 3px solid var(--line); border-radius: 24px; padding: 20px; display: grid; gap: 12px; box-shadow: 0 6px 0 var(--line); }
+    label { font-family: var(--display); font-size: 18px; }
+    input[type="date"], input[type="time"] { width: 100%; padding: 12px; border: 2px solid var(--line); border-radius: 14px; font: inherit; background: #fff; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .check { font-family: inherit; font-size: 14px; color: var(--sub); display: flex; gap: 6px; align-items: center; }
+    button.big {
+      width: 100%; padding: 16px; border: 3px solid var(--line); border-radius: 18px;
+      background: var(--red); color: #fffaf0; font: 26px var(--display); cursor: pointer; box-shadow: 0 5px 0 var(--line);
+    }
+    button.big:active { transform: translateY(4px); box-shadow: 0 1px 0 var(--line); }
+    button:focus-visible, input:focus-visible { outline: 3px solid var(--purple); outline-offset: 2px; }
+    .lineup { display: flex; justify-content: center; gap: 4px; }
+    .lineup canvas { width: 56px; height: 62px; }
+    .hero { display: grid; justify-items: center; text-align: center; gap: 4px; }
+    .hero canvas { width: 136px; height: 150px; }
+    .hero .name { font: 34px/1.1 var(--display); }
+    .hero .summary { font-family: var(--display); color: var(--green); font-size: 19px; }
+    .trio { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .trio > div { border: 2px solid var(--line); border-radius: 16px; padding: 8px 4px; display: grid; justify-items: center; font-family: var(--display); }
+    .trio small { color: var(--sub); font-size: 14px; }
+    .trio canvas { width: 44px; height: 48px; }
+    .foe { background: #ffe1dc; } .friend { background: #e1f5e4; } .luck { background: #fff3c4; }
+    .skills { display: flex; flex-wrap: wrap; gap: 8px; }
+    .chip { background: #efe6ff; color: #4b2fb0; border: 2px solid var(--purple); border-radius: 999px; padding: 4px 12px; font-family: var(--display); }
+    .desc { color: var(--sub); font-size: 14px; }
+    .fortune h2 { margin: 0; font: 24px var(--display); }
+    .fortune p { margin: 0; }
+    .how { display: grid; gap: 6px; font-size: 15px; }
+    .rps { display: flex; flex-wrap: wrap; gap: 6px 12px; font-family: var(--display); font-size: 17px; }
+    .sub-term { color: var(--sub); font-size: 12px; }
+    #game { width: 100%; max-width: 960px; }
+    #game canvas { border-radius: 16px; }
+    #mute { position: fixed; top: calc(8px + env(safe-area-inset-top, 0px)); right: 8px; border: 2px solid var(--line); border-radius: 999px; background: var(--card); font: 14px var(--display); padding: 4px 10px; cursor: pointer; }
+    #result { position: fixed; inset: 0; background: rgba(34, 26, 46, 0.6); display: grid; place-items: center; padding: 8px; }
+    #result canvas { height: 100%; max-height: calc(100vh - 16px); max-width: 100%; aspect-ratio: 9 / 16; border-radius: 20px; }
     [hidden] { display: none !important; }
   </style>
 </head>
 <body>
-  <form id="birth-form" class="panel">
+  <section id="intro" class="screen">
     <h1>운명 피하기</h1>
-    <div>내 사주대로 달린다</div>
-    <label>생년월일 (양력)</label>
-    <input type="date" name="date" required value="1995-06-15" />
-    <label>태어난 시각 (모르면 비워두기)</label>
-    <input type="time" name="time" value="08:30" />
-    <button type="submit">사주 뽑고 캐릭터 받기</button>
-  </form>
+    <p class="tag">생일만 넣으면, 내 팔자대로 달린다</p>
+    <div class="lineup" id="lineup"></div>
+    <form id="birth-form" class="card">
+      <label for="birth-date">생년월일 (양력)</label>
+      <input id="birth-date" type="date" name="date" required value="1995-06-15" />
+      <label for="birth-time">태어난 시각</label>
+      <input id="birth-time" type="time" name="time" value="08:30" />
+      <label class="check"><input id="no-time" type="checkbox" /> 시간은 몰라요</label>
+      <button class="big" type="submit">내 캐릭터 뽑기</button>
+    </form>
+  </section>
 
-  <section id="fortune" class="panel" hidden>
-    <h1 id="char-name"></h1>
-    <div id="char-desc"></div>
-    <ul id="trait-list"></ul>
-    <strong id="today-title"></strong>
-    <ul id="today-list"></ul>
-    <button id="start">달리기 시작 (↑/Space 점프 · ↓ 슬라이딩 · 모바일: 화면 좌/우)</button>
+  <section id="reveal" class="screen" hidden>
+    <div class="card hero">
+      <canvas id="hero-canvas" width="80" height="88"></canvas>
+      <div class="name" id="char-name"></div>
+      <div class="desc" id="char-tagline"></div>
+      <div class="summary" id="char-summary"></div>
+    </div>
+    <div class="trio">
+      <div class="foe"><small>내 천적</small><canvas id="foe-canvas" width="80" height="88"></canvas><span id="foe-name"></span></div>
+      <div class="friend"><small>내 귀인</small><canvas id="friend-canvas" width="80" height="88"></canvas><span id="friend-name"></span></div>
+      <div class="luck"><small>럭키템</small><canvas id="luck-canvas" width="52" height="52"></canvas><span id="luck-name"></span></div>
+    </div>
+    <div class="card">
+      <strong>팔자 스킬</strong>
+      <div id="skills" class="how"></div>
+    </div>
+    <div class="card fortune">
+      <h2 id="fortune-title"></h2>
+      <p id="fortune-headline"></p>
+      <p class="desc" id="fortune-desc"></p>
+    </div>
+    <div class="card how">
+      <strong>하는 법</strong>
+      <div>👈 <b>왼쪽 탭</b> 변신 (나무→불→흙→쇠→물) · <b>오른쪽 탭</b> 점프 👉</div>
+      <div class="desc">PC: Z 변신 · Space 점프</div>
+      <div>큰 장애물은 <b>이기는 모양</b>으로 부수거나, <b>같은 모양</b>으로 통과!</div>
+      <div class="rps" id="rps"></div>
+    </div>
+    <button class="big" id="start">달리기!</button>
   </section>
 
   <div id="game" hidden></div>
-  <div id="result"><canvas width="1080" height="1920"></canvas></div>
+  <button id="mute" hidden>🔊 소리</button>
+  <div id="result" hidden><canvas width="1080" height="1920" aria-label="결과 카드"></canvas></div>
 
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
   <script type="module" src="./src/main.js"></script>

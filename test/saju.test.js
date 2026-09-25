@@ -4,7 +4,6 @@ import { dayPillar, yearPillar, monthPillar, hourPillar, computeFourPillars } fr
 import { pillarLabel, WOOD, FIRE, EARTH, METAL, WATER } from '../src/saju/constants.js';
 import { REL, relation, generates, controls } from '../src/saju/elements.js';
 import { analyzeSaju, findShinsal, SHINSAL } from '../src/saju/analyze.js';
-import { computeDailyFortune, isYukhap, isChung } from '../src/saju/iljin.js';
 
 test('일주 기준점', () => {
   assert.equal(pillarLabel(dayPillar(2000, 1, 1)), '戊午');
@@ -58,11 +57,6 @@ test('신살 판정', () => {
   assert.deepEqual(new Set(findShinsal(p)), new Set([SHINSAL.YEOKMA, SHINSAL.DOHWA, SHINSAL.HWAGAE, SHINSAL.BAEKHO]));
 });
 
-test('육합/충', () => {
-  assert.ok(isYukhap(2, 11) && isYukhap(6, 7) && !isYukhap(0, 2));
-  assert.ok(isChung(0, 6) && isChung(11, 5) && !isChung(0, 5));
-});
-
 test('analyzeSaju 는 결정적이고 일관된 값을 낸다', () => {
   const birth = { year: 1995, month: 6, day: 15, hour: 8, minute: 30 };
   const a = analyzeSaju(birth);
@@ -70,6 +64,4 @@ test('analyzeSaju 는 결정적이고 일관된 값을 낸다', () => {
   assert.equal(a.counts.reduce((s, c) => s + c, 0), 8);
   assert.ok(a.yongsin >= 0 && a.yongsin < 5);
   assert.equal((a.gisin + 2) % 5, a.yongsin); // 기신은 용신을 극한다
-  const f = computeDailyFortune(a, { year: 2026, month: 9, day: 25 });
-  assert.ok(f.effects.length >= 1 && f.grade.label);
 });

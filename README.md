@@ -1,17 +1,17 @@
-# 운명 피하기: 내 사주대로 달린다
+# 운명 피하기
 
-생년월일시로 사주(만세력)를 뽑아 캐릭터·스탯·장애물·기믹이 바뀌는 웹 2D 캐주얼 러너 (Phaser 3).
+생일만 넣으면 내 팔자대로 달리는 **오행 가위바위보 러너**.
 
-- 기획서 & 공식: [`docs/GAME_DESIGN.md`](docs/GAME_DESIGN.md)
-- 밸런스 수치: [`src/game/tables.js`](src/game/tables.js)
+- 플레이: https://kkangji99.github.io/faterun/
+- 기획: [`docs/GAME_DESIGN.md`](docs/GAME_DESIGN.md)
 
-## 실행
+## 로컬 실행
 
 ```bash
-npm start      # http://localhost:8080 (정적 서버, Phaser는 CDN 로드)
-npm test       # 만세력 · 상생상극 · 충돌 로직 단위 테스트
+npm start   # http://localhost:8080
+npm test
 ```
 
-조작: `↑`/`Space` 점프, `↓` 슬라이딩 · 모바일은 화면 왼쪽 탭 = 점프, 오른쪽 홀드 = 슬라이딩.
+조작: 왼쪽 탭(Z) 변신 · 오른쪽 탭(Space) 점프
 
-> 재미로 보는 사주 게임입니다. 만세력은 절기 평균일 기반 간이 계산이라 절입일 ±1일은 실제와 다를 수 있습니다.
+> 재미로 보는 사주 게임입니다.
